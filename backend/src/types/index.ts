@@ -1,18 +1,18 @@
 export interface PlexLibraryItem {
+  id: number;
+  libraryId: number;
   ratingKey: string;
-  key: string;
-  type: "movie" | "show" | "episode";
   title: string;
+  type: "movie" | "show" | "episode";
   year?: number;
-  thumb?: string;
-  art?: string;
-  duration?: number;
-  addedAt?: number;
-  updatedAt?: number;
-  viewCount?: number;
-  viewOffset?: number;
-  libraryKey?: number;
-  libraryTitle?: string;
+  summary?: string;
+  contentRating?: string;
+  studio?: string;
+  seasonCount?: number;
+  episodeCount?: number;
+  show?: number;
+  season?: number;
+  episode?: number;
 }
 
 export interface PlexLibrary {

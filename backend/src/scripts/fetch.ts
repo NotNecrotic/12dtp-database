@@ -1,3 +1,4 @@
+import "@/db/schema.js";
 import { config } from "@/config/env.js";
 import { db } from "@/db/database.js";
 import type { PlexLibrary, PlexLibraryItem } from "@/types/index.js";
@@ -56,29 +57,32 @@ async function fetchData(url: string, token: string): Promise<PlexLibrary[]> {
 
       const page = await plexRequest<PlexResponse>(url, token);
 
-      const metadata = page.MediaContainer?.Metadata ?? [];
+      const pageItems = page.MediaContainer?.Metadata ?? [];
 
-      if (metadata.length === 0) {
+      if (pageItems.length === 0) {
         break;
       }
 
-      for (const item of metadata) {
+      for (const item of pageItems) {
         items.push({
+          id: Number(item.ratingKey),
+          libraryId: Number(key),
           ratingKey: String(item.ratingKey),
-          key: item.key,
-          type: item.type,
           title: item.title,
+          type: item.type,
           year: item.year,
-          thumb: item.thumb,
-          art: item.art,
-          duration: item.duration,
-          addedAt: item.addedAt,
-          updatedAt: item.updatedAt,
-          viewCount: item.viewCount,
-          viewOffset: item.viewOffset,
-          libraryKey: Number(key),
-          libraryTitle: title,
+          summary: item.summary,
+          contentRating: item.contentRating,
+          studio: item.studio,
+          seasonCount: item.childCount,
+          episodeCount: item.leafCount,
+          season: item.parentIndex,
+          episode: item.index,
         });
+
+        if (item.grandparentRatingKey) {
+          item.show = Number(item.grandparentRatingKey);
+        }
       }
 
       console.log(`  ${items.length} items scraped...`);
@@ -86,11 +90,11 @@ async function fetchData(url: string, token: string): Promise<PlexLibrary[]> {
       const total =
         page.MediaContainer?.totalSize ??
         page.MediaContainer?.size ??
-        metadata.length;
+        pageItems.length;
 
-      offset += metadata.length;
+      offset += pageItems.length;
 
-      if (offset >= total || metadata.length < PAGE_SIZE) {
+      if (offset >= total || pageItems.length < PAGE_SIZE) {
         break;
       }
     }
@@ -107,7 +111,7 @@ async function fetchData(url: string, token: string): Promise<PlexLibrary[]> {
 }
 
 async function generateData(url: string, token: string): Promise<void> {
-  const data = await fetchData(config.PLEX_URL, config.PLEX_TOKEN);
+  const data = await fetchData(url, token);
 
   const insertLibrary = db.prepare(`
     INSERT INTO libraries (
@@ -174,18 +178,20 @@ async function generateData(url: string, token: string): Promise<void> {
       episode = excluded.episode
   `);
 
-  const transaction = db.transaction(() => {
-    for (const library of data.items) {
+  db.exec("BEGIN");
+
+  try {
+    for (const library of data) {
       insertLibrary.run({
-        id: item.id,
-        title: item.title,
-        type: item.type,
+        id: library.id,
+        title: library.title,
+        type: library.type,
       });
 
-      for (const item of data.items) {
+      for (const item of library.items) {
         insertItem.run({
-          id: item.id,
-          library_id: item.id,
+          id: Number(item.ratingKey),
+          library_id: library.id,
           rating_key: item.ratingKey,
           title: item.title,
           type: item.type,
@@ -201,7 +207,12 @@ async function generateData(url: string, token: string): Promise<void> {
         });
       }
     }
-  });
 
-  transaction();
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
+
+await generateData(config.PLEX_URL, config.PLEX_TOKEN);

@@ -2,18 +2,22 @@
  * Initialises the application's SQLite database.
  * */
 
-import Database from "better-sqlite3";
+import { DatabaseSync } from "@photostructure/sqlite";
+import fs from "node:fs";
 import path from "node:path";
 import { config } from "@/config/env.js";
 
-const dataDir = config.DATA_PATH;
+fs.mkdirSync(config.DATA_PATH, { recursive: true });
 
-const databasePath = path.join(dataDir, "database.db");
+const databasePath = path.join(config.DATA_PATH, "database.db");
 
-export const db: Database.Database = new Database(databasePath);
+export const db = new DatabaseSync(databasePath);
 
-// Enable foreign key constraint enforcement.
-db.pragma("foreign_keys = ON");
-
-// Enable WAL mode for improved read/write concurrency.
-db.pragma("journal_mode = WAL");
+/*
+ Enable foreign key constraint enforcement.
+ Enable WAL mode for improved read/write concurrency.
+*/
+db.exec(`
+  PRAGMA foreign_keys = ON;
+  PRAGMA journal_mode = WAL; 
+`);
