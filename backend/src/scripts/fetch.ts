@@ -7,11 +7,60 @@ interface PlexResponse {
   MediaContainer?: {
     size?: number;
     totalSize?: number;
-    Metadata?: any[];
+    Metadata?: PlexMetadata[];
+    Directory?: PlexLibrarySection[];
   };
 }
 
+interface PlexLibrarySection {
+  key: string;
+  title: string;
+  type: string;
+}
+
+interface PlexMetadata {
+  ratingKey: string;
+  title: string;
+  type: PlexLibraryItem["type"];
+  year?: number;
+  summary?: string;
+  contentRating?: string;
+  studio?: string;
+  childCount?: number;
+  leafCount?: number;
+  parentIndex?: number;
+  index?: number;
+  grandparentRatingKey?: string;
+  thumb?: string;
+  art?: string;
+}
+
 const PAGE_SIZE = 1000;
+
+function toId(value: string, name: string): number {
+  const id = Number(value);
+
+  if (!Number.isSafeInteger(id)) {
+    throw new Error(`Plex returned an invalid ${name}: ${value}`);
+  }
+
+  return id;
+}
+
+function toAssetUrl(
+  baseUrl: string,
+  path: string | undefined,
+  token: string,
+): string | null {
+  if (!path) {
+    return null;
+  }
+
+  const url = new URL(path, baseUrl);
+  url.searchParams.set("X-Plex-Token", token);
+
+  return url.toString();
+}
 
 async function plexRequest<T>(url: string, token: string): Promise<T> {
   const response = await fetch(url, {
@@ -31,16 +80,38 @@ async function plexRequest<T>(url: string, token: string): Promise<T> {
 async function fetchData(url: string, token: string): Promise<PlexLibrary[]> {
   const baseUrl = url.replace(/\/$/, "");
 
-  const sections = await plexRequest<PlexResponse>(
+  const sectionResponse = await plexRequest<PlexResponse>(
     `${baseUrl}/library/sections`,
     token,
   );
 
-  const libraries = sections.MediaContainer?.Metadata ?? [];
+  const container = sectionResponse.MediaContainer;
+
+  if (!container) {
+    throw new Error("Plex API response did not include a MediaContainer");
+  }
+
+  const sectionList = container.Directory;
+
+  if (!sectionList) {
+    throw new Error("Plex API response did not include library sections");
+  }
+
+  const libraries = sectionList.filter(
+    (
+      library,
+    ): library is PlexLibrarySection & { type: PlexLibrary["type"] } =>
+      library.type === "movie" || library.type === "show",
+  );
+
+  if (libraries.length === 0) {
+    console.log("No movie or TV libraries found.");
+  }
+
   const result: PlexLibrary[] = [];
 
   for (const library of libraries) {
-    const key = library.key;
+    const key = toId(library.key, "library key");
     const title = library.title;
 
     console.log(`Scraping library: ${title}`);
@@ -65,24 +136,31 @@ async function fetchData(url: string, token: string): Promise<PlexLibrary[]> {
 
       for (const item of pageItems) {
         items.push({
-          id: Number(item.ratingKey),
-          libraryId: Number(key),
+          id: toId(item.ratingKey, "rating key"),
+          libraryId: key,
           ratingKey: String(item.ratingKey),
           title: item.title,
           type: item.type,
-          year: item.year,
-          summary: item.summary,
-          contentRating: item.contentRating,
-          studio: item.studio,
-          seasonCount: item.childCount,
-          episodeCount: item.leafCount,
-          season: item.parentIndex,
-          episode: item.index,
+          ...(item.year !== undefined && { year: item.year }),
+          ...(item.summary !== undefined && { summary: item.summary }),
+          ...(item.contentRating !== undefined && {
+            contentRating: item.contentRating,
+          }),
+          ...(item.studio !== undefined && { studio: item.studio }),
+          ...(item.childCount !== undefined && {
+            seasonCount: item.childCount,
+          }),
+          ...(item.leafCount !== undefined && {
+            episodeCount: item.leafCount,
+          }),
+          ...(item.grandparentRatingKey && {
+            show: toId(item.grandparentRatingKey, "show rating key"),
+          }),
+          ...(item.parentIndex !== undefined && { season: item.parentIndex }),
+          ...(item.index !== undefined && { episode: item.index }),
+          poster: toAssetUrl(baseUrl, item.thumb, token),
+          background: toAssetUrl(baseUrl, item.art, token),
         });
-
-        if (item.grandparentRatingKey) {
-          item.show = Number(item.grandparentRatingKey);
-        }
       }
 
       console.log(`  ${items.length} items scraped...`);
@@ -178,6 +256,22 @@ async function generateData(url: string, token: string): Promise<void> {
       episode = excluded.episode
   `);
 
+  const insertArtwork = db.prepare(`
+    INSERT INTO artwork (
+      item_id,
+      poster,
+      background
+    )
+    VALUES (
+      @item_id,
+      @poster,
+      @background
+    )
+    ON CONFLICT(item_id) DO UPDATE SET
+      poster = excluded.poster,
+      background = excluded.background
+  `);
+
   db.exec("BEGIN");
 
   try {
@@ -190,7 +284,7 @@ async function generateData(url: string, token: string): Promise<void> {
 
       for (const item of library.items) {
         insertItem.run({
-          id: Number(item.ratingKey),
+          id: item.id,
           library_id: library.id,
           rating_key: item.ratingKey,
           title: item.title,
@@ -204,6 +298,12 @@ async function generateData(url: string, token: string): Promise<void> {
           show: item.show ?? null,
           season: item.season ?? null,
           episode: item.episode ?? null,
+        });
+
+        insertArtwork.run({
+          item_id: item.id,
+          poster: item.poster,
+          background: item.background,
         });
       }
     }

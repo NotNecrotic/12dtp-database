@@ -13,6 +13,8 @@ export interface PlexLibraryItem {
   show?: number;
   season?: number;
   episode?: number;
+  poster: string | null;
+  background: string | null;
 }
 
 export interface PlexLibrary {
