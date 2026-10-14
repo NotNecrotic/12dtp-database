@@ -7,6 +7,7 @@ import { z } from "zod";
 
 const schema = z.object({
   DATA_PATH: z.string().default("/data"),
+  PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   PLEX_URL: z.url().min(1),
   PLEX_TOKEN: z.string().min(1),
 });
