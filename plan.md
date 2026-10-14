@@ -11,7 +11,7 @@
 
 - [ ] **Frontend**:
   - [ ] Proxy local paths to backend e.g. /api/v1 => backend
-  - [ ] Setup React + Tailwind project
+  - [x] Setup Vue + Tailwind project
   - [ ] Basic pages + navigation
   - [ ] Load API data into pages
   - [ ] styled pages using tailwind
