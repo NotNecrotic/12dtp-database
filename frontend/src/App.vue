@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { Home, Moon, Sun } from "@lucide/vue";
+import { ChevronRight, Home, Moon, Sun } from "@lucide/vue";
 
 type SectionKey =
   | "titles"
@@ -483,7 +483,7 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
             class="text-xs text-neutral-600 max-[480px]:hidden dark:text-neutral-400"
             >{{ entry.description }}</span
           >
-          <span class="text-right" aria-hidden="true">→</span>
+          <ChevronRight class="ml-auto" :size="16" aria-hidden="true" />
         </a>
       </section>
 
@@ -762,7 +762,7 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
           <span class="text-xs text-neutral-600 dark:text-neutral-400">{{
             entry.type ?? ""
           }}</span>
-          <span class="text-right" aria-hidden="true">→</span>
+          <ChevronRight class="ml-auto" :size="16" aria-hidden="true" />
         </a>
         <p
           v-if="!visibleEntries.length"
