@@ -89,6 +89,16 @@ const routes = [
     path: `${API_PREFIX}/people/:id/items`,
     description: "List items associated with a person.",
   },
+  {
+    method: "GET",
+    path: `${API_PREFIX}/content-ratings`,
+    description: "List content ratings.",
+  },
+  {
+    method: "GET",
+    path: `${API_PREFIX}/content-ratings/:rating/items`,
+    description: "List items with a content rating.",
+  },
 ] as const;
 
 // Shared table details let the related-data routes use the same handler.
@@ -158,7 +168,7 @@ function pagination(url: URL): { limit: number; offset: number } | null {
 // Return a page of items and its total count
 function listItems(
   where: string,
-  parameters: Record<string, number>,
+  parameters: Record<string, number | string>,
   url: URL,
 ): {
   data: unknown[];
@@ -317,7 +327,7 @@ function handleRequest(
       return;
     }
 
-    if (action === "items" && parts.length === 4) {
+    if (action === "items" && parts.length === 5) {
       const result = listItems("WHERE i.library_id = @id", { id }, url);
       sendJson(
         response,
@@ -327,7 +337,7 @@ function handleRequest(
       return;
     }
 
-    if (!action && parts.length === 3) {
+    if (!action && parts.length === 4) {
       const library = db
         .prepare("SELECT * FROM libraries WHERE id = @id")
         .get({ id });
@@ -351,7 +361,7 @@ function handleRequest(
       return;
     }
 
-    if (idText && parts.length === 3) {
+    if (idText && parts.length === 4) {
       const id = parseId(idText);
       if (id === null) {
         sendJson(response, 400, { error: "Invalid item ID" });
@@ -360,6 +370,58 @@ function handleRequest(
 
       const item = getItem(id);
       sendJson(response, item ? 200 : 404, item ?? { error: "Item not found" });
+      return;
+    }
+  }
+
+  if (resource === "content-ratings") {
+    if (!idText && parts.length === 3) {
+      sendJson(
+        response,
+        200,
+        db
+          .prepare(
+            `
+            SELECT content_rating AS id, content_rating AS name, COUNT(*) AS item_count
+            FROM items
+            WHERE content_rating IS NOT NULL AND content_rating != ''
+            GROUP BY content_rating
+            ORDER BY content_rating COLLATE NOCASE
+          `,
+          )
+          .all(),
+      );
+      return;
+    }
+
+    if (idText && action === "items" && parts.length === 5) {
+      let rating: string;
+      try {
+        rating = decodeURIComponent(idText);
+      } catch {
+        sendJson(response, 400, { error: "Invalid content rating" });
+        return;
+      }
+
+      const exists = db
+        .prepare("SELECT 1 FROM items WHERE content_rating = @rating LIMIT 1")
+        .get({ rating });
+
+      if (!exists) {
+        sendJson(response, 404, { error: "Content rating not found" });
+        return;
+      }
+
+      const result = listItems(
+        "WHERE i.content_rating = @rating",
+        { rating },
+        url,
+      );
+      sendJson(
+        response,
+        result ? 200 : 400,
+        result ?? { error: "Invalid pagination parameters" },
+      );
       return;
     }
   }
@@ -382,7 +444,7 @@ function handleRequest(
       return;
     }
 
-    if (idText && action === "items" && parts.length === 4) {
+    if (idText && action === "items" && parts.length === 5) {
       const id = parseId(idText);
       if (id === null) {
         sendJson(response, 400, { error: `Invalid ${resource} ID` });

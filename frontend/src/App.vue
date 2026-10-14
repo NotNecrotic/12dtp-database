@@ -1,0 +1,645 @@
+<script setup lang="ts">
+import { computed, onMounted, onUnmounted, ref } from "vue";
+
+type SectionKey =
+  | "titles"
+  | "genres"
+  | "people"
+  | "content-ratings"
+  | "countries"
+  | "collections"
+  | "libraries";
+
+interface Section {
+  key: SectionKey;
+  label: string;
+  singular: string;
+  description: string;
+}
+
+interface Entry {
+  id: number | string;
+  name?: string;
+  title?: string;
+  type?: string;
+  item_count?: number;
+}
+
+interface Item {
+  id: number;
+  title: string;
+  type: string;
+  year: number | null;
+  summary?: string | null;
+  content_rating?: string | null;
+  studio?: string | null;
+  season_count?: number | null;
+  episode_count?: number | null;
+  poster?: string | null;
+  library_id?: number;
+  collections?: Entry[];
+  genres?: Entry[];
+  countries?: Entry[];
+  people?: (Entry & { role?: string })[];
+}
+
+interface PaginatedItems {
+  data: Item[];
+  pagination: { limit: number; offset: number; total: number };
+}
+
+const sections: Section[] = [
+  {
+    key: "titles",
+    label: "Titles",
+    singular: "Title",
+    description: "All movies and series.",
+  },
+  {
+    key: "genres",
+    label: "Genres",
+    singular: "Genre",
+    description: "Browse by genre.",
+  },
+  {
+    key: "people",
+    label: "People",
+    singular: "Person",
+    description: "Actors and other credited people.",
+  },
+  {
+    key: "content-ratings",
+    label: "Content ratings",
+    singular: "Content rating",
+    description: "Browse by content rating.",
+  },
+  {
+    key: "countries",
+    label: "Countries",
+    singular: "Country",
+    description: "Browse by country.",
+  },
+  {
+    key: "collections",
+    label: "Collections",
+    singular: "Collection",
+    description: "Browse collections.",
+  },
+  {
+    key: "libraries",
+    label: "Libraries",
+    singular: "Library",
+    description: "Browse media libraries.",
+  },
+];
+
+const apiPrefix = "/api/v1";
+const path = ref(window.location.pathname);
+const query = ref("");
+const entries = ref<Entry[]>([]);
+const items = ref<Item[]>([]);
+const selectedItem = ref<Item | null>(null);
+const pagination = ref<PaginatedItems["pagination"] | null>(null);
+const loading = ref(false);
+const loadingMore = ref(false);
+const error = ref("");
+let requestVersion = 0;
+
+const parts = computed(() => path.value.split("/").filter(Boolean));
+const section = computed(() =>
+  sections.find((candidate) => candidate.key === parts.value[0]),
+);
+const selectedEntry = computed(() =>
+  entries.value.find((entry) => String(entry.id) === parts.value[1]),
+);
+const selectedTitle = computed(
+  () => parts.value[0] === "titles" && parts.value.length > 1,
+);
+const isHome = computed(() => parts.value.length === 0);
+const isDetail = computed(() => parts.value.length > 1);
+const visibleEntries = computed(() => {
+  const term = query.value.trim().toLocaleLowerCase();
+  return term
+    ? entries.value.filter((entry) =>
+        entryName(entry).toLocaleLowerCase().includes(term),
+      )
+    : entries.value;
+});
+const visibleItems = computed(() => {
+  const term = query.value.trim().toLocaleLowerCase();
+  return term
+    ? items.value.filter((item) =>
+        `${item.title} ${item.year ?? ""} ${item.type}`
+          .toLocaleLowerCase()
+          .includes(term),
+      )
+    : items.value;
+});
+const pageHeading = computed(() => {
+  if (isHome.value) return "Media library";
+  if (selectedTitle.value && selectedItem.value)
+    return selectedItem.value.title;
+  if (selectedEntry.value) return entryName(selectedEntry.value);
+  return section.value?.label ?? "Not found";
+});
+
+// Fetch an API endpoint and provide server errors to the caller.
+async function api<T>(endpoint: string): Promise<T> {
+  const response = await fetch(`${apiPrefix}${endpoint}`);
+  const payload: unknown = await response.json();
+  if (!response.ok) {
+    const message =
+      typeof payload === "object" && payload !== null && "error" in payload
+        ? String(payload.error)
+        : `Request failed (${response.status})`;
+    throw new Error(message);
+  }
+  return payload as T;
+}
+
+// Fetch one page of items using the backend's pagination parameters.
+function getPage(endpoint: string, offset = 0) {
+  return api<PaginatedItems>(`${endpoint}?limit=100&offset=${offset}`);
+}
+
+// Map a section key to the API route that lists its categories.
+function entryEndpoint(key: SectionKey) {
+  return key === "content-ratings" ? "/content-ratings" : `/${key}`;
+}
+
+// Load the data needed for the current home, section, category, or title route.
+async function loadPage() {
+  const version = ++requestVersion;
+  query.value = "";
+  entries.value = [];
+  items.value = [];
+  selectedItem.value = null;
+  pagination.value = null;
+  error.value = "";
+
+  const routeParts = path.value.split("/").filter(Boolean);
+  const currentSection = sections.find(
+    (candidate) => candidate.key === routeParts[0],
+  );
+  if (!currentSection) {
+    loading.value = false;
+    return;
+  }
+
+  loading.value = true;
+  try {
+    if (routeParts.length === 1) {
+      if (currentSection.key === "titles") {
+        const result = await getPage("/items");
+        if (version !== requestVersion) return;
+        items.value = result.data;
+        pagination.value = result.pagination;
+      } else {
+        const result = await api<Entry[]>(entryEndpoint(currentSection.key));
+        if (version !== requestVersion) return;
+        entries.value = result;
+      }
+    } else if (currentSection.key === "titles") {
+      const result = await api<Item>(
+        `/items/${encodeURIComponent(routeParts[1] ?? "")}`,
+      );
+      if (version !== requestVersion) return;
+      selectedItem.value = result;
+    } else {
+      const categoryList = await api<Entry[]>(
+        entryEndpoint(currentSection.key),
+      );
+      if (version !== requestVersion) return;
+      entries.value = categoryList;
+      const category = categoryList.find(
+        (entry) => String(entry.id) === routeParts[1],
+      );
+      if (!category) {
+        error.value = `${currentSection.singular} not found.`;
+        return;
+      }
+      const categoryId = encodeURIComponent(String(category.id));
+      const result = await getPage(
+        `/${currentSection.key}/${categoryId}/items`,
+      );
+      if (version !== requestVersion) return;
+      items.value = result.data;
+      pagination.value = result.pagination;
+    }
+  } catch (cause) {
+    if (version === requestVersion) {
+      error.value =
+        cause instanceof Error
+          ? cause.message
+          : "Could not load data from the API.";
+    }
+  } finally {
+    if (version === requestVersion) loading.value = false;
+  }
+}
+
+// Append the next page of titles to the current section or category results.
+async function loadMore() {
+  if (!section.value || !pagination.value || loadingMore.value) return;
+  loadingMore.value = true;
+  error.value = "";
+  try {
+    const routeParts = path.value.split("/").filter(Boolean);
+    let endpoint = "/items";
+    if (routeParts.length > 1 && section.value.key !== "titles") {
+      endpoint = `/${section.value.key}/${encodeURIComponent(routeParts[1] ?? "")}/items`;
+    }
+    const result = await getPage(endpoint, items.value.length);
+    items.value = [...items.value, ...result.data];
+    pagination.value = result.pagination;
+  } catch (cause) {
+    error.value =
+      cause instanceof Error ? cause.message : "Could not load more titles.";
+  } finally {
+    loadingMore.value = false;
+  }
+}
+
+// Navigate client-side while preserving normal modified-link browser behavior.
+function navigate(event: MouseEvent, destination: string) {
+  if (
+    event.button !== 0 ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    event.altKey
+  )
+    return;
+  event.preventDefault();
+  if (path.value !== destination) {
+    window.history.pushState({}, "", destination);
+    path.value = destination;
+    void loadPage();
+    window.scrollTo(0, 0);
+  }
+}
+
+// Reload the displayed route after browser back or forward navigation.
+function syncPath() {
+  path.value = window.location.pathname;
+  void loadPage();
+}
+
+// Build a URL for a section, or for one entry within that section.
+function routeFor(sectionKey: SectionKey, id?: number | string) {
+  return id === undefined
+    ? `/${sectionKey}`
+    : `/${sectionKey}/${encodeURIComponent(String(id))}`;
+}
+
+// Build the detail URL for a linked metadata entry.
+function resourceRoute(resource: SectionKey, entry: Entry) {
+  return routeFor(resource, entry.id);
+}
+
+// Use the display field supplied by the category or library API response.
+function entryName(entry: Entry) {
+  return entry.name ?? entry.title ?? "";
+}
+
+// Present backend item type values in user-facing form.
+function formatType(type: string) {
+  return type === "show" ? "Series" : type === "movie" ? "Movie" : type;
+}
+
+onMounted(() => {
+  window.addEventListener("popstate", syncPath);
+  void loadPage();
+});
+onUnmounted(() => window.removeEventListener("popstate", syncPath));
+</script>
+
+<template>
+  <header
+    class="flex min-h-[58px] items-center justify-between gap-5 border-b border-neutral-300 px-[5vw] max-[760px]:block max-[760px]:pt-[15px]"
+  >
+    <a
+      class="grid h-9 w-9 shrink-0 place-items-center border border-transparent no-underline hover:border-neutral-400 focus-visible:border-neutral-400"
+      href="/"
+      aria-label="Home"
+      title="Home"
+      @click="navigate($event, '/')"
+    >
+      <svg
+        aria-hidden="true"
+        width="20"
+        height="20"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.75"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="m3 10 9-7 9 7" />
+        <path d="M5 9v12h14V9" />
+        <path d="M9 21v-7h6v7" />
+      </svg>
+    </a>
+    <nav
+      class="flex flex-wrap gap-[18px] max-[760px]:mt-[5px] max-[760px]:flex-nowrap max-[760px]:gap-4 max-[760px]:overflow-x-auto"
+      aria-label="Main sections"
+    >
+      <a
+        v-for="entry in sections"
+        :key="entry.key"
+        :class="[
+          'shrink-0 border-b-2 border-transparent py-5 text-xs no-underline max-[760px]:py-3',
+          section?.key === entry.key
+            ? 'border-neutral-950'
+            : 'hover:border-neutral-950',
+        ]"
+        :href="routeFor(entry.key)"
+        :aria-current="section?.key === entry.key ? 'page' : undefined"
+        @click="navigate($event, routeFor(entry.key))"
+        >{{ entry.label }}</a
+      >
+    </nav>
+  </header>
+
+  <main
+    class="mx-auto min-h-[calc(100vh-58px)] w-[90%] max-w-[1060px] py-[52px] max-[760px]:py-[34px]"
+  >
+    <div
+      class="mb-7 flex items-end justify-between gap-6 max-[760px]:flex-col max-[760px]:items-start max-[760px]:gap-[14px]"
+    >
+      <div>
+        <p
+          v-if="!isHome && section"
+          class="mb-[13px] flex gap-2 text-xs text-neutral-600"
+        >
+          <a href="/" @click="navigate($event, '/')">Home</a>
+          <span>/</span>
+          <a
+            :href="routeFor(section.key)"
+            @click="navigate($event, routeFor(section.key))"
+            >{{ section.label }}</a
+          >
+          <template v-if="isDetail"
+            ><span>/</span><span>{{ pageHeading }}</span></template
+          >
+        </p>
+        <h1 class="m-0 text-[clamp(26px,4vw,38px)] font-medium tracking-[-1px]">
+          {{ isHome ? "Media library" : pageHeading }}
+        </h1>
+        <p
+          v-if="isHome"
+          class="mt-[9px] max-w-[660px] text-sm leading-relaxed text-neutral-600"
+        >
+          Choose a section to explore.
+        </p>
+        <p
+          v-else-if="!isDetail && section"
+          class="mt-[9px] max-w-[660px] text-sm leading-relaxed text-neutral-600"
+        >
+          {{ section.description }}
+        </p>
+        <p
+          v-else-if="selectedItem?.summary"
+          class="mt-[9px] max-w-[660px] text-sm leading-relaxed text-neutral-600"
+        >
+          {{ selectedItem.summary }}
+        </p>
+      </div>
+      <input
+        v-if="!isHome && !selectedTitle && !loading && !error"
+        v-model="query"
+        class="h-[34px] w-[min(250px,38vw)] border border-neutral-400 bg-white px-2 text-[13px] text-neutral-950 outline-none focus:border-neutral-950 max-[760px]:w-full"
+        type="search"
+        :placeholder="
+          section?.key === 'titles' || isDetail ? 'Search titles' : 'Search'
+        "
+        aria-label="Search"
+      />
+    </div>
+
+    <p v-if="loading" class="px-1 py-[18px] text-xs text-neutral-600">
+      Loading…
+    </p>
+    <p
+      v-else-if="error"
+      class="border-y border-red-700 py-[14px] text-[13px] text-red-800"
+      role="alert"
+    >
+      {{ error }}
+    </p>
+
+    <section
+      v-else-if="isHome"
+      class="border-t border-neutral-300"
+      aria-label="Library sections"
+    >
+      <a
+        v-for="entry in sections"
+        :key="entry.key"
+        class="grid min-h-[53px] grid-cols-[minmax(130px,1fr)_minmax(150px,2fr)_24px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100 max-[480px]:grid-cols-[1fr_24px]"
+        :href="routeFor(entry.key)"
+        @click="navigate($event, routeFor(entry.key))"
+      >
+        <span class="text-sm font-medium">{{ entry.label }}</span>
+        <span class="text-xs text-neutral-600 max-[480px]:hidden">{{
+          entry.description
+        }}</span>
+        <span class="text-right" aria-hidden="true">→</span>
+      </a>
+    </section>
+
+    <section
+      v-else-if="selectedTitle && selectedItem"
+      class="grid grid-cols-[minmax(110px,180px)_1fr] items-start gap-8 max-[480px]:grid-cols-1 max-[480px]:gap-[22px]"
+    >
+      <img
+        v-if="selectedItem.poster"
+        class="h-auto w-full max-[480px]:w-[min(45vw,160px)]"
+        :src="selectedItem.poster"
+        :alt="`${selectedItem.title} poster`"
+      />
+      <dl class="m-0 grid gap-0">
+        <div
+          class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr]"
+        >
+          <dt class="text-neutral-600">Type</dt>
+          <dd class="m-0">{{ formatType(selectedItem.type) }}</dd>
+        </div>
+        <div
+          v-if="selectedItem.year"
+          class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr]"
+        >
+          <dt class="text-neutral-600">Year</dt>
+          <dd class="m-0">{{ selectedItem.year }}</dd>
+        </div>
+        <div
+          v-if="selectedItem.content_rating"
+          class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr]"
+        >
+          <dt class="text-neutral-600">Content rating</dt>
+          <dd class="m-0">
+            <a
+              :href="routeFor('content-ratings', selectedItem.content_rating)"
+              @click="
+                navigate(
+                  $event,
+                  routeFor('content-ratings', selectedItem.content_rating),
+                )
+              "
+              >{{ selectedItem.content_rating }}</a
+            >
+          </dd>
+        </div>
+        <div
+          v-if="selectedItem.studio"
+          class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr]"
+        >
+          <dt class="text-neutral-600">Studio</dt>
+          <dd class="m-0">{{ selectedItem.studio }}</dd>
+        </div>
+        <div
+          v-if="selectedItem.season_count"
+          class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr]"
+        >
+          <dt class="text-neutral-600">Seasons</dt>
+          <dd class="m-0">{{ selectedItem.season_count }}</dd>
+        </div>
+        <template
+          v-for="resource in [
+            'genres',
+            'people',
+            'countries',
+            'collections',
+          ] as const"
+          :key="resource"
+        >
+          <div
+            v-if="selectedItem[resource]?.length"
+            class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr]"
+          >
+            <dt class="text-neutral-600">
+              {{
+                resource === "people"
+                  ? "People"
+                  : resource[0]?.toUpperCase() + resource.slice(1)
+              }}
+            </dt>
+            <dd class="m-0 flex flex-wrap gap-x-[14px] gap-y-[6px]">
+              <a
+                v-for="related in selectedItem[resource]"
+                :key="related.id"
+                :href="resourceRoute(resource, related)"
+                @click="navigate($event, resourceRoute(resource, related))"
+                class="hover:decoration-2"
+                >{{ related.name }}</a
+              >
+            </dd>
+          </div>
+        </template>
+      </dl>
+    </section>
+
+    <section
+      v-else-if="isDetail && selectedEntry"
+      class="border-t border-neutral-300"
+      aria-label="Titles in category"
+    >
+      <p class="mb-0 px-1 pb-3 text-xs text-neutral-600">
+        {{ pagination?.total ?? items.length }} titles
+      </p>
+      <a
+        v-for="item in visibleItems"
+        :key="item.id"
+        class="grid min-h-[53px] grid-cols-[1fr_70px_90px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100"
+        :href="routeFor('titles', item.id)"
+        @click="navigate($event, routeFor('titles', item.id))"
+      >
+        <span class="text-sm font-medium">{{ item.title }}</span>
+        <span class="text-right text-xs text-neutral-600">{{
+          item.year ?? ""
+        }}</span>
+        <span class="text-right text-xs text-neutral-600">{{
+          formatType(item.type)
+        }}</span>
+      </a>
+      <p
+        v-if="!visibleItems.length"
+        class="px-1 py-[18px] text-xs text-neutral-600"
+      >
+        No titles found.
+      </p>
+      <button
+        v-if="pagination && items.length < pagination.total"
+        class="mt-[18px] border border-neutral-500 bg-white px-3 py-[9px] text-xs hover:bg-neutral-100 disabled:cursor-wait disabled:text-neutral-500"
+        :disabled="loadingMore"
+        @click="loadMore"
+      >
+        {{ loadingMore ? "Loading…" : "Load more" }}
+      </button>
+    </section>
+
+    <section
+      v-else-if="section?.key === 'titles'"
+      class="border-t border-neutral-300"
+      aria-label="Titles"
+    >
+      <p class="mb-0 px-1 pb-3 text-xs text-neutral-600">
+        {{ pagination?.total ?? items.length }} titles
+      </p>
+      <a
+        v-for="item in visibleItems"
+        :key="item.id"
+        class="grid min-h-[53px] grid-cols-[1fr_70px_90px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100"
+        :href="routeFor('titles', item.id)"
+        @click="navigate($event, routeFor('titles', item.id))"
+      >
+        <span class="text-sm font-medium">{{ item.title }}</span>
+        <span class="text-right text-xs text-neutral-600">{{
+          item.year ?? ""
+        }}</span>
+        <span class="text-right text-xs text-neutral-600">{{
+          formatType(item.type)
+        }}</span>
+      </a>
+      <p
+        v-if="!visibleItems.length"
+        class="px-1 py-[18px] text-xs text-neutral-600"
+      >
+        No titles found.
+      </p>
+      <button
+        v-if="pagination && items.length < pagination.total"
+        class="mt-[18px] border border-neutral-500 bg-white px-3 py-[9px] text-xs hover:bg-neutral-100 disabled:cursor-wait disabled:text-neutral-500"
+        :disabled="loadingMore"
+        @click="loadMore"
+      >
+        {{ loadingMore ? "Loading…" : "Load more" }}
+      </button>
+    </section>
+
+    <section
+      v-else-if="section"
+      class="border-t border-neutral-300"
+      :aria-label="section.label"
+    >
+      <a
+        v-for="entry in visibleEntries"
+        :key="entry.id"
+        class="grid min-h-[53px] grid-cols-[1fr_1fr_24px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100"
+        :href="resourceRoute(section.key, entry)"
+        @click="navigate($event, resourceRoute(section.key, entry))"
+      >
+        <span class="text-sm font-medium">{{ entryName(entry) }}</span>
+        <span class="text-xs text-neutral-600">{{ entry.type ?? "" }}</span>
+        <span class="text-right" aria-hidden="true">→</span>
+      </a>
+      <p
+        v-if="!visibleEntries.length"
+        class="px-1 py-[18px] text-xs text-neutral-600"
+      >
+        No categories found.
+      </p>
+    </section>
+  </main>
+</template>
