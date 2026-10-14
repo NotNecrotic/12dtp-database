@@ -1,7 +1,15 @@
+/**
+ * Fetches movie and TV library metadata from Plex and upserts it into SQLite.
+ */
+
 import "@/db/schema.js";
 import { config } from "@/config/env.js";
 import { db } from "@/db/database.js";
-import type { PlexLibrary, PlexLibraryItem } from "@/types/index.js";
+import type {
+  PlexLibrary,
+  PlexLibraryItem,
+  PlexPerson,
+} from "@/types/index.js";
 
 interface PlexResponse {
   MediaContainer?: {
@@ -16,6 +24,14 @@ interface PlexLibrarySection {
   key: string;
   title: string;
   type: string;
+}
+
+interface PlexTag {
+  tag: string;
+}
+
+interface PlexRole extends PlexTag {
+  role?: string;
 }
 
 interface PlexMetadata {
@@ -33,13 +49,24 @@ interface PlexMetadata {
   grandparentRatingKey?: string;
   thumb?: string;
   art?: string;
+  Genre?: PlexTag[];
+  Collection?: PlexTag[];
+  Country?: PlexTag[];
+  Role?: PlexRole[];
+  Director?: PlexTag[];
+  Writer?: PlexTag[];
 }
 
+// Plex uses pagination. This sets the amount of items to return per request.
 const PAGE_SIZE = 1000;
+// Limit of how many detail requests can be sent at the same time. A detail request is a request for a single library item.
+const DETAIL_CONCURRENCY = 8;
 
+// Convert a Plex identifier to a safe integer for the database.
 function toId(value: string, name: string): number {
   const id = Number(value);
 
+  // Database IDs need to stay exact integers.
   if (!Number.isSafeInteger(id)) {
     throw new Error(`Plex returned an invalid ${name}: ${value}`);
   }
@@ -47,6 +74,7 @@ function toId(value: string, name: string): number {
   return id;
 }
 
+// Turn a Plex artwork path into a full URL that includes the access token.
 function toAssetUrl(
   baseUrl: string,
   path: string | undefined,
@@ -56,12 +84,134 @@ function toAssetUrl(
     return null;
   }
 
+  // Plex image paths are relative, the token makes each URL directly usable.
   const url = new URL(path, baseUrl);
   url.searchParams.set("X-Plex-Token", token);
 
   return url.toString();
 }
 
+// Return trimmed tag names from Plex metadata.
+function tagNames(tags: PlexTag[] | undefined): string[] {
+  // Normalize Plex's tag objects into unique names for the lookup tables.
+  return [
+    ...new Set(
+      (tags ?? []).map(({ tag }) => tag.trim()).filter((tag) => tag.length > 0),
+    ),
+  ];
+}
+
+// Extract and deduplicate cast, director, and writer "people" for an item.
+function itemPeople(metadata: PlexMetadata): PlexPerson[] {
+  const people = [
+    ...(metadata.Role ?? []).map(({ tag, role }) => ({
+      name: tag.trim(),
+      role: role?.trim() || "actor",
+    })),
+    ...tagNames(metadata.Director).map((name) => ({ name, role: "director" })),
+    ...tagNames(metadata.Writer).map((name) => ({ name, role: "writer" })),
+  ].filter(({ name }) => name.length > 0);
+  const uniquePeople = new Map(
+    people.map((person) => [`${person.name}\0${person.role}`, person]),
+  );
+
+  return [...uniquePeople.values()];
+}
+
+// Run the mapper on every value, with no more than `concurrency` calls at a time.
+async function mapConcurrent<T, U>(
+  values: T[],
+  concurrency: number,
+  mapper: (value: T) => Promise<U>,
+): Promise<U[]> {
+  const results = new Array<U>(values.length);
+  let nextIndex = 0;
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+      while (nextIndex < values.length) {
+        const index = nextIndex++;
+        results[index] = await mapper(values[index]!);
+      }
+    }),
+  );
+
+  return results;
+}
+
+// Fetch all collections in a library and map their names to items.
+async function fetchCollections(
+  baseUrl: string,
+  libraryId: number,
+  token: string,
+): Promise<{ names: string[]; items: Map<number, Set<string>> }> {
+  const names = new Set<string>();
+  const items = new Map<number, Set<string>>();
+  let offset = 0;
+  let total = Number.POSITIVE_INFINITY;
+
+  while (offset < total) {
+    const collectionPage = await plexRequest<PlexResponse>(
+      `${baseUrl}/library/sections/${libraryId}/collections` +
+        `?X-Plex-Container-Size=${PAGE_SIZE}` +
+        `&X-Plex-Container-Start=${offset}`,
+      token,
+    );
+    const container = collectionPage.MediaContainer;
+    const collections = container?.Metadata ?? [];
+
+    if (collections.length === 0) {
+      break;
+    }
+
+    for (const collection of collections) {
+      const collectionName = collection.title.trim();
+
+      if (!collectionName) {
+        continue;
+      }
+
+      names.add(collectionName);
+
+      // Plex exposes collection members separately from the library item list.
+      let memberOffset = 0;
+      let memberTotal = Number.POSITIVE_INFINITY;
+
+      while (memberOffset < memberTotal) {
+        const membersPage = await plexRequest<PlexResponse>(
+          `${baseUrl}/library/collections/${encodeURIComponent(collection.ratingKey)}/children` +
+            `?X-Plex-Container-Size=${PAGE_SIZE}` +
+            `&X-Plex-Container-Start=${memberOffset}`,
+          token,
+        );
+        const memberContainer = membersPage.MediaContainer;
+        const members = memberContainer?.Metadata ?? [];
+
+        if (members.length === 0) {
+          break;
+        }
+
+        for (const member of members) {
+          const itemId = toId(member.ratingKey, "collection item rating key");
+          const collectionNames = items.get(itemId) ?? new Set<string>();
+          collectionNames.add(collectionName);
+          items.set(itemId, collectionNames);
+        }
+
+        memberOffset += members.length;
+        memberTotal =
+          memberContainer?.totalSize ?? memberContainer?.size ?? memberOffset;
+      }
+    }
+
+    offset += collections.length;
+    total = container?.totalSize ?? container?.size ?? offset;
+  }
+
+  return { names: [...names], items };
+}
+
+// Make an authenticated Plex API request and parse its JSON response.
 async function plexRequest<T>(url: string, token: string): Promise<T> {
   const response = await fetch(url, {
     headers: {
@@ -74,10 +224,13 @@ async function plexRequest<T>(url: string, token: string): Promise<T> {
     throw new Error(`Plex API ${response.status}: ${response.statusText}`);
   }
 
+  // Plex returns JSON when the Accept header is set above.
   return response.json() as Promise<T>;
 }
 
+// Fetch supported libraries, their items, collections, and people metadata.
 async function fetchData(url: string, token: string): Promise<PlexLibrary[]> {
+  // Normalize url so relative artwork paths and API routes share the same base.
   const baseUrl = url.replace(/\/$/, "");
 
   const sectionResponse = await plexRequest<PlexResponse>(
@@ -97,10 +250,9 @@ async function fetchData(url: string, token: string): Promise<PlexLibrary[]> {
     throw new Error("Plex API response did not include library sections");
   }
 
+  // Libraries that are not movies or shows are ignored.
   const libraries = sectionList.filter(
-    (
-      library,
-    ): library is PlexLibrarySection & { type: PlexLibrary["type"] } =>
+    (library): library is PlexLibrarySection & { type: PlexLibrary["type"] } =>
       library.type === "movie" || library.type === "show",
   );
 
@@ -116,10 +268,12 @@ async function fetchData(url: string, token: string): Promise<PlexLibrary[]> {
 
     console.log(`Scraping library: ${title}`);
 
+    const collectionData = await fetchCollections(baseUrl, key, token);
     const items: PlexLibraryItem[] = [];
 
     let offset = 0;
 
+    // Fetch each library page until Plex reports there are no more items.
     while (true) {
       const url =
         `${baseUrl}/library/sections/${key}/all` +
@@ -134,7 +288,29 @@ async function fetchData(url: string, token: string): Promise<PlexLibrary[]> {
         break;
       }
 
-      for (const item of pageItems) {
+      // Fetch detailed metadata for each item concurrently.
+      const peopleByItem = await mapConcurrent(
+        pageItems,
+        DETAIL_CONCURRENCY,
+        async (item) => {
+          const details = await plexRequest<PlexResponse>(
+            `${baseUrl}/library/metadata/${encodeURIComponent(item.ratingKey)}`,
+            token,
+          );
+          const detailedItem = details.MediaContainer?.Metadata?.[0];
+
+          if (!detailedItem) {
+            throw new Error(
+              `Plex returned no metadata for item ${item.ratingKey}`,
+            );
+          }
+
+          return itemPeople(detailedItem);
+        },
+      );
+
+      for (const [index, item] of pageItems.entries()) {
+        // Keep Plex tags and artwork alongside the core item fields for insertion.
         items.push({
           id: toId(item.ratingKey, "rating key"),
           libraryId: key,
@@ -160,6 +336,17 @@ async function fetchData(url: string, token: string): Promise<PlexLibrary[]> {
           ...(item.index !== undefined && { episode: item.index }),
           poster: toAssetUrl(baseUrl, item.thumb, token),
           background: toAssetUrl(baseUrl, item.art, token),
+          genres: tagNames(item.Genre),
+          collections: [
+            ...new Set([
+              ...tagNames(item.Collection),
+              ...(collectionData.items.get(
+                toId(item.ratingKey, "rating key"),
+              ) ?? []),
+            ]),
+          ],
+          countries: tagNames(item.Country),
+          people: peopleByItem[index] ?? itemPeople(item),
         });
       }
 
@@ -181,13 +368,23 @@ async function fetchData(url: string, token: string): Promise<PlexLibrary[]> {
       id: key,
       title,
       type: library.type,
+      collections: collectionData.names,
       items,
     });
+
+    const peopleCount = items.reduce(
+      (count, item) => count + item.people.length,
+      0,
+    );
+    console.log(
+      `  ${collectionData.names.length} collections and ${peopleCount} people found.`,
+    );
   }
 
   return result;
 }
 
+// Upsert fetched Plex data into the database in one transaction.
 async function generateData(url: string, token: string): Promise<void> {
   const data = await fetchData(url, token);
 
@@ -272,6 +469,43 @@ async function generateData(url: string, token: string): Promise<void> {
       background = excluded.background
   `);
 
+  const clearItemCollections = db.prepare(
+    "DELETE FROM item_collections WHERE item_id = @item_id",
+  );
+  const clearItemCountries = db.prepare(
+    "DELETE FROM item_countries WHERE item_id = @item_id",
+  );
+  const clearItemGenres = db.prepare(
+    "DELETE FROM item_genres WHERE item_id = @item_id",
+  );
+  const clearItemPeople = db.prepare(
+    "DELETE FROM item_people WHERE item_id = @item_id",
+  );
+
+  const insertItemCollection = db.prepare(`
+    INSERT INTO item_collections (item_id, collection_id)
+    VALUES (@item_id, @collection_id)
+  `);
+  const insertItemCountry = db.prepare(`
+    INSERT INTO item_countries (item_id, country_id)
+    VALUES (@item_id, @country_id)
+  `);
+  const insertItemGenre = db.prepare(`
+    INSERT INTO item_genres (item_id, genre_id)
+    VALUES (@item_id, @genre_id)
+  `);
+  const insertItemPerson = db.prepare(`
+    INSERT INTO item_people (item_id, person_id, role)
+    VALUES (@item_id, @person_id, @role)
+  `);
+  const lookupIds: Record<LookupTable, Map<string, number>> = {
+    collections: new Map(),
+    countries: new Map(),
+    genres: new Map(),
+    people: new Map(),
+  };
+
+  // Apply the whole import atomically so a failed insert cannot leave partial data.
   db.exec("BEGIN");
 
   try {
@@ -282,7 +516,17 @@ async function generateData(url: string, token: string): Promise<void> {
         type: library.type,
       });
 
+      for (const name of library.collections) {
+        getOrInsertId("collections", name, lookupIds.collections);
+      }
+
       for (const item of library.items) {
+        // Replace each item's links
+        clearItemCollections.run({ item_id: item.id });
+        clearItemCountries.run({ item_id: item.id });
+        clearItemGenres.run({ item_id: item.id });
+        clearItemPeople.run({ item_id: item.id });
+
         insertItem.run({
           id: item.id,
           library_id: library.id,
@@ -305,6 +549,49 @@ async function generateData(url: string, token: string): Promise<void> {
           poster: item.poster,
           background: item.background,
         });
+
+        // Rebuild each item's many-to-many links from its latest Plex metadata.
+        for (const name of item.collections) {
+          const collectionId = getOrInsertId(
+            "collections",
+            name,
+            lookupIds.collections,
+          );
+          insertItemCollection.run({
+            item_id: item.id,
+            collection_id: collectionId,
+          });
+        }
+
+        for (const name of item.countries) {
+          const countryId = getOrInsertId(
+            "countries",
+            name,
+            lookupIds.countries,
+          );
+          insertItemCountry.run({
+            item_id: item.id,
+            country_id: countryId,
+          });
+        }
+
+        for (const name of item.genres) {
+          const genreId = getOrInsertId("genres", name, lookupIds.genres);
+          insertItemGenre.run({ item_id: item.id, genre_id: genreId });
+        }
+
+        for (const person of item.people) {
+          const personId = getOrInsertId(
+            "people",
+            person.name,
+            lookupIds.people,
+          );
+          insertItemPerson.run({
+            item_id: item.id,
+            person_id: personId,
+            role: person.role,
+          });
+        }
       }
     }
 
@@ -313,6 +600,40 @@ async function generateData(url: string, token: string): Promise<void> {
     db.exec("ROLLBACK");
     throw error;
   }
+}
+
+type LookupTable = "collections" | "countries" | "genres" | "people";
+
+// Find a lookup record by name or insert it and return its ID.
+function getOrInsertId(
+  table: LookupTable,
+  name: string,
+  cache: Map<string, number>,
+): number {
+  // Reuse resolved IDs to avoid repeating the same lookup for every item.
+  const cached = cache.get(name);
+
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const existing = db
+    .prepare(`SELECT id FROM ${table} WHERE name = @name LIMIT 1`)
+    .get({ name }) as { id: number } | undefined;
+
+  if (existing) {
+    cache.set(name, existing.id);
+    return existing.id;
+  }
+
+  const inserted = db
+    .prepare(`INSERT INTO ${table} (name) VALUES (@name)`)
+    .run({ name });
+
+  const id = Number(inserted.lastInsertRowid);
+  cache.set(name, id);
+
+  return id;
 }
 
 await generateData(config.PLEX_URL, config.PLEX_TOKEN);

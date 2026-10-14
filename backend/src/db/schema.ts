@@ -80,20 +80,6 @@ db.exec(`
     FOREIGN KEY (genre_id) REFERENCES genres(id) ON DELETE CASCADE
   );
 
-  CREATE TABLE IF NOT EXISTS labels (
-    id INTEGER PRIMARY KEY,
-    name TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS item_labels (
-    item_id INTEGER NOT NULL,
-    label_id INTEGER NOT NULL,
-
-    PRIMARY KEY (item_id, label_id),
-    FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
-    FOREIGN KEY (label_id) REFERENCES labels(id) ON DELETE CASCADE
-  );
-
   CREATE TABLE IF NOT EXISTS people (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL
