@@ -28,6 +28,8 @@ export interface PlexLibraryItem {
 export interface PlexPerson {
   name: string;
   role: string;
+  character?: string | null;
+  profilePicture?: string | null;
 }
 
 export interface PlexLibrary {

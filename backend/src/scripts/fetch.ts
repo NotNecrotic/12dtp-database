@@ -32,6 +32,7 @@ interface PlexTag {
 
 interface PlexRole extends PlexTag {
   role?: string;
+  thumb?: string;
 }
 
 interface PlexMetadata {
@@ -55,6 +56,8 @@ interface PlexMetadata {
   Role?: PlexRole[];
   Director?: PlexTag[];
   Writer?: PlexTag[];
+  Producer?: PlexTag[];
+  ExecutiveProducer?: PlexTag[];
 }
 
 // Plex uses pagination. This sets the amount of items to return per request.
@@ -102,14 +105,25 @@ function tagNames(tags: PlexTag[] | undefined): string[] {
 }
 
 // Extract and deduplicate cast, director, and writer "people" for an item.
-function itemPeople(metadata: PlexMetadata): PlexPerson[] {
+function itemPeople(
+  metadata: PlexMetadata,
+  baseUrl: string,
+  token: string,
+): PlexPerson[] {
   const people = [
-    ...(metadata.Role ?? []).map(({ tag, role }) => ({
+    ...(metadata.Role ?? []).map(({ tag, role: character, thumb }) => ({
       name: tag.trim(),
-      role: role?.trim() || "actor",
+      role: "actor",
+      character: character?.trim() || null,
+      profilePicture: toAssetUrl(baseUrl, thumb, token),
     })),
     ...tagNames(metadata.Director).map((name) => ({ name, role: "director" })),
     ...tagNames(metadata.Writer).map((name) => ({ name, role: "writer" })),
+    ...tagNames(metadata.Producer).map((name) => ({ name, role: "producer" })),
+    ...tagNames(metadata.ExecutiveProducer).map((name) => ({
+      name,
+      role: "executive producer",
+    })),
   ].filter(({ name }) => name.length > 0);
   const uniquePeople = new Map(
     people.map((person) => [`${person.name}\0${person.role}`, person]),
@@ -305,7 +319,7 @@ async function fetchData(url: string, token: string): Promise<PlexLibrary[]> {
             );
           }
 
-          return itemPeople(detailedItem);
+          return itemPeople(detailedItem, baseUrl, token);
         },
       );
 
@@ -346,7 +360,7 @@ async function fetchData(url: string, token: string): Promise<PlexLibrary[]> {
             ]),
           ],
           countries: tagNames(item.Country),
-          people: peopleByItem[index] ?? itemPeople(item),
+          people: peopleByItem[index] ?? itemPeople(item, baseUrl, token),
         });
       }
 
@@ -495,8 +509,13 @@ async function generateData(url: string, token: string): Promise<void> {
     VALUES (@item_id, @genre_id)
   `);
   const insertItemPerson = db.prepare(`
-    INSERT INTO item_people (item_id, person_id, role)
-    VALUES (@item_id, @person_id, @role)
+    INSERT INTO item_people (item_id, person_id, role, character)
+    VALUES (@item_id, @person_id, @role, @character)
+  `);
+  const updatePersonProfile = db.prepare(`
+    UPDATE people
+    SET profile_picture = COALESCE(@profile_picture, profile_picture)
+    WHERE id = @person_id
   `);
   const lookupIds: Record<LookupTable, Map<string, number>> = {
     collections: new Map(),
@@ -586,10 +605,15 @@ async function generateData(url: string, token: string): Promise<void> {
             person.name,
             lookupIds.people,
           );
+          updatePersonProfile.run({
+            person_id: personId,
+            profile_picture: person.profilePicture ?? null,
+          });
           insertItemPerson.run({
             item_id: item.id,
             person_id: personId,
             role: person.role,
+            character: person.character ?? null,
           });
         }
       }

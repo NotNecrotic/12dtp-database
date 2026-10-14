@@ -82,13 +82,15 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS people (
     id INTEGER PRIMARY KEY,
-    name TEXT NOT NULL
+    name TEXT NOT NULL,
+    profile_picture TEXT
   );
 
   CREATE TABLE IF NOT EXISTS item_people (
     item_id INTEGER NOT NULL,
     person_id INTEGER NOT NULL,
     role TEXT NOT NULL,
+    character TEXT,
 
     PRIMARY KEY (item_id, person_id, role),
     FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,

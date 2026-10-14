@@ -24,6 +24,8 @@ interface Entry {
   title?: string;
   type?: string;
   item_count?: number;
+  profile_picture?: string | null;
+  roles?: string[];
 }
 
 interface Item {
@@ -37,6 +39,7 @@ interface Item {
   season_count?: number | null;
   episode_count?: number | null;
   poster?: string | null;
+  character?: string | null;
   library_id?: number;
   collections?: Entry[];
   genres?: Entry[];
@@ -98,6 +101,7 @@ const apiPrefix = "/api/v1";
 const path = ref(window.location.pathname);
 const query = ref("");
 const entries = ref<Entry[]>([]);
+const personProfile = ref<Entry | null>(null);
 const items = ref<Item[]>([]);
 const selectedItem = ref<Item | null>(null);
 const pagination = ref<PaginatedItems["pagination"] | null>(null);
@@ -112,7 +116,9 @@ const section = computed(() =>
   sections.find((candidate) => candidate.key === parts.value[0]),
 );
 const selectedEntry = computed(() =>
-  entries.value.find((entry) => String(entry.id) === parts.value[1]),
+  personProfile.value && String(personProfile.value.id) === parts.value[1]
+    ? personProfile.value
+    : entries.value.find((entry) => String(entry.id) === parts.value[1]),
 );
 const selectedTitle = computed(
   () => parts.value[0] === "titles" && parts.value.length > 1,
@@ -174,6 +180,7 @@ async function loadPage() {
   const version = ++requestVersion;
   query.value = "";
   entries.value = [];
+  personProfile.value = null;
   items.value = [];
   selectedItem.value = null;
   pagination.value = null;
@@ -207,6 +214,16 @@ async function loadPage() {
       );
       if (version !== requestVersion) return;
       selectedItem.value = result;
+    } else if (currentSection.key === "people") {
+      const personId = encodeURIComponent(routeParts[1] ?? "");
+      const profile = await api<Entry>(`/people/${personId}`);
+      if (version !== requestVersion) return;
+      personProfile.value = profile;
+
+      const result = await getPage(`/people/${personId}/items`);
+      if (version !== requestVersion) return;
+      items.value = result.data;
+      pagination.value = result.pagination;
     } else {
       const categoryList = await api<Entry[]>(
         entryEndpoint(currentSection.key),
@@ -309,6 +326,11 @@ function formatType(type: string) {
   return type === "show" ? "Series" : type === "movie" ? "Movie" : type;
 }
 
+// Present imported credit categories in the profile's readable role list.
+function formatPersonRole(role: string) {
+  return role.replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 // Toggle the color scheme and remember the selection for the next visit.
 function toggleTheme() {
   isDark.value = !isDark.value;
@@ -375,282 +397,380 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
     <main
       class="mx-auto min-h-[calc(100vh-58px)] w-[90%] max-w-[1060px] py-[52px] max-[760px]:py-[34px]"
     >
-    <div
-      class="mb-7 flex items-end justify-between gap-6 max-[760px]:flex-col max-[760px]:items-start max-[760px]:gap-[14px]"
-    >
-      <div>
-        <p
-          v-if="!isHome && section"
-          class="mb-[13px] flex gap-2 text-xs text-neutral-600 dark:text-neutral-400"
-        >
-          <a href="/" @click="navigate($event, '/')">Home</a>
-          <span>/</span>
-          <a
-            :href="routeFor(section.key)"
-            @click="navigate($event, routeFor(section.key))"
-            >{{ section.label }}</a
-          >
-          <template v-if="isDetail"
-            ><span>/</span><span>{{ pageHeading }}</span></template
-          >
-        </p>
-        <h1 class="m-0 text-[clamp(26px,4vw,38px)] font-medium tracking-[-1px]">
-          {{ isHome ? "Media library" : pageHeading }}
-        </h1>
-        <p
-          v-if="isHome"
-          class="mt-[9px] max-w-[660px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400"
-        >
-          Choose a section to explore.
-        </p>
-        <p
-          v-else-if="!isDetail && section"
-          class="mt-[9px] max-w-[660px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400"
-        >
-          {{ section.description }}
-        </p>
-        <p
-          v-else-if="selectedItem?.summary"
-          class="mt-[9px] max-w-[660px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400"
-        >
-          {{ selectedItem.summary }}
-        </p>
-      </div>
-      <input
-        v-if="!isHome && !selectedTitle && !loading && !error"
-        v-model="query"
-        class="h-[34px] w-[min(250px,38vw)] border border-neutral-400 bg-white px-2 text-[13px] text-neutral-950 outline-none focus:border-neutral-950 max-[760px]:w-full dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:focus:border-neutral-300"
-        type="search"
-        :placeholder="
-          section?.key === 'titles' || isDetail ? 'Search titles' : 'Search'
-        "
-        aria-label="Search"
-      />
-    </div>
-
-    <p v-if="loading" class="px-1 py-[18px] text-xs text-neutral-600 dark:text-neutral-400">
-      Loading…
-    </p>
-    <p
-      v-else-if="error"
-      class="border-y border-red-700 py-[14px] text-[13px] text-red-800 dark:border-red-400 dark:text-red-300"
-      role="alert"
-    >
-      {{ error }}
-    </p>
-
-    <section
-      v-else-if="isHome"
-      class="border-t border-neutral-300 dark:border-neutral-700"
-      aria-label="Library sections"
-    >
-      <a
-        v-for="entry in sections"
-        :key="entry.key"
-        class="grid min-h-[53px] grid-cols-[minmax(130px,1fr)_minmax(150px,2fr)_24px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100 max-[480px]:grid-cols-[1fr_24px] dark:border-neutral-700 dark:hover:bg-neutral-900"
-        :href="routeFor(entry.key)"
-        @click="navigate($event, routeFor(entry.key))"
+      <div
+        class="mb-7 flex items-end justify-between gap-6 max-[760px]:flex-col max-[760px]:items-start max-[760px]:gap-[14px]"
       >
-        <span class="text-sm font-medium">{{ entry.label }}</span>
-        <span class="text-xs text-neutral-600 max-[480px]:hidden dark:text-neutral-400">{{
-          entry.description
-        }}</span>
-        <span class="text-right" aria-hidden="true">→</span>
-      </a>
-    </section>
-
-    <section
-      v-else-if="selectedTitle && selectedItem"
-      class="grid grid-cols-[minmax(110px,180px)_1fr] items-start gap-8 max-[480px]:grid-cols-1 max-[480px]:gap-[22px]"
-    >
-      <img
-        v-if="selectedItem.poster"
-        class="h-auto w-full max-[480px]:w-[min(45vw,160px)]"
-        :src="selectedItem.poster"
-        :alt="`${selectedItem.title} poster`"
-      />
-      <dl class="m-0 grid gap-0">
-        <div
-          class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
-        >
-          <dt class="text-neutral-600 dark:text-neutral-400">Type</dt>
-          <dd class="m-0">{{ formatType(selectedItem.type) }}</dd>
-        </div>
-        <div
-          v-if="selectedItem.year"
-          class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
-        >
-          <dt class="text-neutral-600 dark:text-neutral-400">Year</dt>
-          <dd class="m-0">{{ selectedItem.year }}</dd>
-        </div>
-        <div
-          v-if="selectedItem.content_rating"
-          class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
-        >
-          <dt class="text-neutral-600 dark:text-neutral-400">Content rating</dt>
-          <dd class="m-0">
+        <div>
+          <p
+            v-if="!isHome && section"
+            class="mb-[13px] flex gap-2 text-xs text-neutral-600 dark:text-neutral-400"
+          >
+            <a href="/" @click="navigate($event, '/')">Home</a>
+            <span>/</span>
             <a
-              :href="routeFor('content-ratings', selectedItem.content_rating)"
-              @click="
-                navigate(
-                  $event,
-                  routeFor('content-ratings', selectedItem.content_rating),
-                )
-              "
-              >{{ selectedItem.content_rating }}</a
+              :href="routeFor(section.key)"
+              @click="navigate($event, routeFor(section.key))"
+              >{{ section.label }}</a
             >
-          </dd>
+            <template v-if="isDetail"
+              ><span>/</span><span>{{ pageHeading }}</span></template
+            >
+          </p>
+          <h1
+            class="m-0 text-[clamp(26px,4vw,38px)] font-medium tracking-[-1px]"
+          >
+            {{ isHome ? "Media library" : pageHeading }}
+          </h1>
+          <p
+            v-if="isHome"
+            class="mt-[9px] max-w-[660px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400"
+          >
+            Choose a section to explore.
+          </p>
+          <p
+            v-else-if="!isDetail && section"
+            class="mt-[9px] max-w-[660px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400"
+          >
+            {{ section.description }}
+          </p>
+          <p
+            v-else-if="selectedItem?.summary"
+            class="mt-[9px] max-w-[660px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400"
+          >
+            {{ selectedItem.summary }}
+          </p>
         </div>
-        <div
-          v-if="selectedItem.studio"
-          class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
+        <input
+          v-if="!isHome && !selectedTitle && !loading && !error"
+          v-model="query"
+          class="h-[34px] w-[min(250px,38vw)] border border-neutral-400 bg-white px-2 text-[13px] text-neutral-950 outline-none focus:border-neutral-950 max-[760px]:w-full dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:focus:border-neutral-300"
+          type="search"
+          :placeholder="
+            section?.key === 'titles' || isDetail ? 'Search titles' : 'Search'
+          "
+          aria-label="Search"
+        />
+      </div>
+
+      <p
+        v-if="loading"
+        class="px-1 py-[18px] text-xs text-neutral-600 dark:text-neutral-400"
+      >
+        Loading…
+      </p>
+      <p
+        v-else-if="error"
+        class="border-y border-red-700 py-[14px] text-[13px] text-red-800 dark:border-red-400 dark:text-red-300"
+        role="alert"
+      >
+        {{ error }}
+      </p>
+
+      <section
+        v-else-if="isHome"
+        class="border-t border-neutral-300 dark:border-neutral-700"
+        aria-label="Library sections"
+      >
+        <a
+          v-for="entry in sections"
+          :key="entry.key"
+          class="grid min-h-[53px] grid-cols-[minmax(130px,1fr)_minmax(150px,2fr)_24px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100 max-[480px]:grid-cols-[1fr_24px] dark:border-neutral-700 dark:hover:bg-neutral-900"
+          :href="routeFor(entry.key)"
+          @click="navigate($event, routeFor(entry.key))"
         >
-          <dt class="text-neutral-600 dark:text-neutral-400">Studio</dt>
-          <dd class="m-0">{{ selectedItem.studio }}</dd>
-        </div>
-        <div
-          v-if="selectedItem.season_count"
-          class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
-        >
-          <dt class="text-neutral-600 dark:text-neutral-400">Seasons</dt>
-          <dd class="m-0">{{ selectedItem.season_count }}</dd>
-        </div>
-        <template
-          v-for="resource in [
-            'genres',
-            'people',
-            'countries',
-            'collections',
-          ] as const"
-          :key="resource"
-        >
+          <span class="text-sm font-medium">{{ entry.label }}</span>
+          <span
+            class="text-xs text-neutral-600 max-[480px]:hidden dark:text-neutral-400"
+            >{{ entry.description }}</span
+          >
+          <span class="text-right" aria-hidden="true">→</span>
+        </a>
+      </section>
+
+      <section
+        v-else-if="selectedTitle && selectedItem"
+        class="grid grid-cols-[minmax(110px,180px)_1fr] items-start gap-8 max-[480px]:grid-cols-1 max-[480px]:gap-[22px]"
+      >
+        <img
+          v-if="selectedItem.poster"
+          class="h-auto w-full max-[480px]:w-[min(45vw,160px)]"
+          :src="selectedItem.poster"
+          :alt="`${selectedItem.title} poster`"
+        />
+        <dl class="m-0 grid gap-0">
           <div
-            v-if="selectedItem[resource]?.length"
+            class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
+          >
+            <dt class="text-neutral-600 dark:text-neutral-400">Type</dt>
+            <dd class="m-0">{{ formatType(selectedItem.type) }}</dd>
+          </div>
+          <div
+            v-if="selectedItem.year"
+            class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
+          >
+            <dt class="text-neutral-600 dark:text-neutral-400">Year</dt>
+            <dd class="m-0">{{ selectedItem.year }}</dd>
+          </div>
+          <div
+            v-if="selectedItem.content_rating"
             class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
           >
             <dt class="text-neutral-600 dark:text-neutral-400">
-              {{
-                resource === "people"
-                  ? "People"
-                  : resource[0]?.toUpperCase() + resource.slice(1)
-              }}
+              Content rating
             </dt>
-            <dd class="m-0 flex flex-wrap gap-x-[14px] gap-y-[6px]">
+            <dd class="m-0">
               <a
-                v-for="related in selectedItem[resource]"
-                :key="related.id"
-                :href="resourceRoute(resource, related)"
-                @click="navigate($event, resourceRoute(resource, related))"
-                class="hover:decoration-2"
-                >{{ related.name }}</a
+                :href="routeFor('content-ratings', selectedItem.content_rating)"
+                @click="
+                  navigate(
+                    $event,
+                    routeFor('content-ratings', selectedItem.content_rating),
+                  )
+                "
+                >{{ selectedItem.content_rating }}</a
               >
             </dd>
           </div>
-        </template>
-      </dl>
-    </section>
+          <div
+            v-if="selectedItem.studio"
+            class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
+          >
+            <dt class="text-neutral-600 dark:text-neutral-400">Studio</dt>
+            <dd class="m-0">{{ selectedItem.studio }}</dd>
+          </div>
+          <div
+            v-if="selectedItem.season_count"
+            class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
+          >
+            <dt class="text-neutral-600 dark:text-neutral-400">Seasons</dt>
+            <dd class="m-0">{{ selectedItem.season_count }}</dd>
+          </div>
+          <template
+            v-for="resource in [
+              'genres',
+              'people',
+              'countries',
+              'collections',
+            ] as const"
+            :key="resource"
+          >
+            <div
+              v-if="selectedItem[resource]?.length"
+              class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
+            >
+              <dt class="text-neutral-600 dark:text-neutral-400">
+                {{
+                  resource === "people"
+                    ? "People"
+                    : resource[0]?.toUpperCase() + resource.slice(1)
+                }}
+              </dt>
+              <dd class="m-0 flex flex-wrap gap-x-[14px] gap-y-[6px]">
+                <a
+                  v-for="related in selectedItem[resource]"
+                  :key="related.id"
+                  :href="resourceRoute(resource, related)"
+                  @click="navigate($event, resourceRoute(resource, related))"
+                  class="hover:decoration-2"
+                  >{{ related.name }}</a
+                >
+              </dd>
+            </div>
+          </template>
+        </dl>
+      </section>
 
-    <section
-      v-else-if="isDetail && selectedEntry"
-      class="border-t border-neutral-300"
-      aria-label="Titles in category"
-    >
-      <p class="mb-0 px-1 pb-3 text-xs text-neutral-600 dark:text-neutral-400">
-        {{ pagination?.total ?? items.length }} titles
-      </p>
-      <a
-        v-for="item in visibleItems"
-        :key="item.id"
-        class="grid min-h-[53px] grid-cols-[1fr_70px_90px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
-        :href="routeFor('titles', item.id)"
-        @click="navigate($event, routeFor('titles', item.id))"
+      <section
+        v-else-if="section?.key === 'people' && selectedEntry"
+        class="space-y-10"
+        aria-label="Person profile"
       >
-        <span class="text-sm font-medium">{{ item.title }}</span>
-        <span class="text-right text-xs text-neutral-600 dark:text-neutral-400">{{
-          item.year ?? ""
-        }}</span>
-        <span class="text-right text-xs text-neutral-600 dark:text-neutral-400">{{
-          formatType(item.type)
-        }}</span>
-      </a>
-      <p
-        v-if="!visibleItems.length"
-        class="px-1 py-[18px] text-xs text-neutral-600 dark:text-neutral-400"
-      >
-        No titles found.
-      </p>
-      <button
-        v-if="pagination && items.length < pagination.total"
-        class="mt-[18px] border border-neutral-500 bg-white px-3 py-[9px] text-xs hover:bg-neutral-100 disabled:cursor-wait disabled:text-neutral-500 dark:border-neutral-600 dark:bg-neutral-950 dark:hover:bg-neutral-900 dark:disabled:text-neutral-500"
-        :disabled="loadingMore"
-        @click="loadMore"
-      >
-        {{ loadingMore ? "Loading…" : "Load more" }}
-      </button>
-    </section>
+        <div class="flex items-start gap-7 max-[560px]:flex-col">
+          <img
+            v-if="selectedEntry.profile_picture"
+            class="h-48 w-40 shrink-0 border border-neutral-300 object-cover dark:border-neutral-700"
+            :src="selectedEntry.profile_picture"
+            :alt="`${entryName(selectedEntry)} profile`"
+          />
+          <div class="max-w-2xl">
+            <p
+              v-if="selectedEntry.roles?.length"
+              class="mb-2 text-sm text-neutral-600 dark:text-neutral-400"
+            >
+              {{ selectedEntry.roles.map(formatPersonRole).join(" · ") }}
+            </p>
+            <h2 class="text-3xl font-medium">{{ entryName(selectedEntry) }}</h2>
+            <p class="mb-5 mt-2 text-xl text-neutral-700 dark:text-neutral-300">
+              {{
+                selectedEntry.item_count ?? pagination?.total ?? items.length
+              }}
+              {{
+                (selectedEntry.item_count ??
+                  pagination?.total ??
+                  items.length) === 1
+                  ? "title"
+                  : "titles"
+              }}
+            </p>
+          </div>
+        </div>
 
-    <section
-      v-else-if="section?.key === 'titles'"
-      class="border-t border-neutral-300 dark:border-neutral-700"
-      aria-label="Titles"
-    >
-      <p class="mb-0 px-1 pb-3 text-xs text-neutral-600 dark:text-neutral-400">
-        {{ pagination?.total ?? items.length }} titles
-      </p>
-      <a
-        v-for="item in visibleItems"
-        :key="item.id"
-        class="grid min-h-[53px] grid-cols-[1fr_70px_90px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
-        :href="routeFor('titles', item.id)"
-        @click="navigate($event, routeFor('titles', item.id))"
-      >
-        <span class="text-sm font-medium">{{ item.title }}</span>
-        <span class="text-right text-xs text-neutral-600 dark:text-neutral-400">{{
-          item.year ?? ""
-        }}</span>
-        <span class="text-right text-xs text-neutral-600 dark:text-neutral-400">{{
-          formatType(item.type)
-        }}</span>
-      </a>
-      <p
-        v-if="!visibleItems.length"
-        class="px-1 py-[18px] text-xs text-neutral-600 dark:text-neutral-400"
-      >
-        No titles found.
-      </p>
-      <button
-        v-if="pagination && items.length < pagination.total"
-        class="mt-[18px] border border-neutral-500 bg-white px-3 py-[9px] text-xs hover:bg-neutral-100 disabled:cursor-wait disabled:text-neutral-500 dark:border-neutral-600 dark:bg-neutral-950 dark:hover:bg-neutral-900 dark:disabled:text-neutral-500"
-        :disabled="loadingMore"
-        @click="loadMore"
-      >
-        {{ loadingMore ? "Loading…" : "Load more" }}
-      </button>
-    </section>
+        <div class="border-t border-neutral-300 pt-5 dark:border-neutral-700">
+          <a
+            v-for="item in visibleItems"
+            :key="item.id"
+            class="grid min-h-[68px] grid-cols-[1fr_70px_90px] items-center gap-4 border-b border-neutral-300 px-1 py-3 no-underline hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
+            :href="routeFor('titles', item.id)"
+            @click="navigate($event, routeFor('titles', item.id))"
+          >
+            <span class="flex flex-col gap-1">
+              <span class="text-base font-medium">{{ item.title }}</span>
+              <span
+                v-if="item.character"
+                class="text-sm text-neutral-600 dark:text-neutral-400"
+              >
+                As {{ item.character }}
+              </span>
+            </span>
+            <span
+              class="text-right text-xs text-neutral-600 dark:text-neutral-400"
+            >
+              {{ item.year ?? "" }}
+            </span>
+            <span
+              class="text-right text-xs text-neutral-600 dark:text-neutral-400"
+            >
+              {{ formatType(item.type) }}
+            </span>
+          </a>
+          <p
+            v-if="!visibleItems.length"
+            class="px-1 py-[18px] text-xs text-neutral-600 dark:text-neutral-400"
+          >
+            No titles found.
+          </p>
+          <button
+            v-if="pagination && items.length < pagination.total"
+            class="mt-[18px] border border-neutral-500 bg-white px-3 py-[9px] text-xs hover:bg-neutral-100 disabled:cursor-wait disabled:text-neutral-500 dark:border-neutral-600 dark:bg-neutral-950 dark:hover:bg-neutral-900 dark:disabled:text-neutral-500"
+            :disabled="loadingMore"
+            @click="loadMore"
+          >
+            {{ loadingMore ? "Loading…" : "Load more" }}
+          </button>
+        </div>
+      </section>
 
-    <section
-      v-else-if="section"
-      class="border-t border-neutral-300 dark:border-neutral-700"
-      :aria-label="section.label"
-    >
-      <a
-        v-for="entry in visibleEntries"
-        :key="entry.id"
-        class="grid min-h-[53px] grid-cols-[1fr_1fr_24px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
-        :href="resourceRoute(section.key, entry)"
-        @click="navigate($event, resourceRoute(section.key, entry))"
+      <section
+        v-else-if="isDetail && selectedEntry"
+        class="border-t border-neutral-300 dark:border-neutral-700"
+        aria-label="Titles in category"
       >
-        <span class="text-sm font-medium">{{ entryName(entry) }}</span>
-        <span class="text-xs text-neutral-600 dark:text-neutral-400">{{ entry.type ?? "" }}</span>
-        <span class="text-right" aria-hidden="true">→</span>
-      </a>
-      <p
-        v-if="!visibleEntries.length"
-        class="px-1 py-[18px] text-xs text-neutral-600 dark:text-neutral-400"
+        <p
+          class="mb-0 px-1 pb-3 text-xs text-neutral-600 dark:text-neutral-400"
+        >
+          {{ pagination?.total ?? items.length }} titles
+        </p>
+        <a
+          v-for="item in visibleItems"
+          :key="item.id"
+          class="grid min-h-[53px] grid-cols-[1fr_70px_90px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          :href="routeFor('titles', item.id)"
+          @click="navigate($event, routeFor('titles', item.id))"
+        >
+          <span class="text-sm font-medium">{{ item.title }}</span>
+          <span
+            class="text-right text-xs text-neutral-600 dark:text-neutral-400"
+            >{{ item.year ?? "" }}</span
+          >
+          <span
+            class="text-right text-xs text-neutral-600 dark:text-neutral-400"
+            >{{ formatType(item.type) }}</span
+          >
+        </a>
+        <p
+          v-if="!visibleItems.length"
+          class="px-1 py-[18px] text-xs text-neutral-600 dark:text-neutral-400"
+        >
+          No titles found.
+        </p>
+        <button
+          v-if="pagination && items.length < pagination.total"
+          class="mt-[18px] border border-neutral-500 bg-white px-3 py-[9px] text-xs hover:bg-neutral-100 disabled:cursor-wait disabled:text-neutral-500 dark:border-neutral-600 dark:bg-neutral-950 dark:hover:bg-neutral-900 dark:disabled:text-neutral-500"
+          :disabled="loadingMore"
+          @click="loadMore"
+        >
+          {{ loadingMore ? "Loading…" : "Load more" }}
+        </button>
+      </section>
+
+      <section
+        v-else-if="section?.key === 'titles'"
+        class="border-t border-neutral-300 dark:border-neutral-700"
+        aria-label="Titles"
       >
-        No categories found.
-      </p>
-    </section>
+        <p
+          class="mb-0 px-1 pb-3 text-xs text-neutral-600 dark:text-neutral-400"
+        >
+          {{ pagination?.total ?? items.length }} titles
+        </p>
+        <a
+          v-for="item in visibleItems"
+          :key="item.id"
+          class="grid min-h-[53px] grid-cols-[1fr_70px_90px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          :href="routeFor('titles', item.id)"
+          @click="navigate($event, routeFor('titles', item.id))"
+        >
+          <span class="text-sm font-medium">{{ item.title }}</span>
+          <span
+            class="text-right text-xs text-neutral-600 dark:text-neutral-400"
+            >{{ item.year ?? "" }}</span
+          >
+          <span
+            class="text-right text-xs text-neutral-600 dark:text-neutral-400"
+            >{{ formatType(item.type) }}</span
+          >
+        </a>
+        <p
+          v-if="!visibleItems.length"
+          class="px-1 py-[18px] text-xs text-neutral-600 dark:text-neutral-400"
+        >
+          No titles found.
+        </p>
+        <button
+          v-if="pagination && items.length < pagination.total"
+          class="mt-[18px] border border-neutral-500 bg-white px-3 py-[9px] text-xs hover:bg-neutral-100 disabled:cursor-wait disabled:text-neutral-500 dark:border-neutral-600 dark:bg-neutral-950 dark:hover:bg-neutral-900 dark:disabled:text-neutral-500"
+          :disabled="loadingMore"
+          @click="loadMore"
+        >
+          {{ loadingMore ? "Loading…" : "Load more" }}
+        </button>
+      </section>
+
+      <section
+        v-else-if="section"
+        class="border-t border-neutral-300 dark:border-neutral-700"
+        :aria-label="section.label"
+      >
+        <a
+          v-for="entry in visibleEntries"
+          :key="entry.id"
+          class="grid min-h-[53px] grid-cols-[1fr_1fr_24px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          :href="resourceRoute(section.key, entry)"
+          @click="navigate($event, resourceRoute(section.key, entry))"
+        >
+          <span class="text-sm font-medium">{{ entryName(entry) }}</span>
+          <span class="text-xs text-neutral-600 dark:text-neutral-400">{{
+            entry.type ?? ""
+          }}</span>
+          <span class="text-right" aria-hidden="true">→</span>
+        </a>
+        <p
+          v-if="!visibleEntries.length"
+          class="px-1 py-[18px] text-xs text-neutral-600 dark:text-neutral-400"
+        >
+          No categories found.
+        </p>
+      </section>
     </main>
   </div>
 </template>

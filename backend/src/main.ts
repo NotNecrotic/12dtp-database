@@ -170,6 +170,7 @@ function listItems(
   where: string,
   parameters: Record<string, number | string>,
   url: URL,
+  personId?: number,
 ): {
   data: unknown[];
   pagination: { limit: number; offset: number; total: number };
@@ -190,6 +191,11 @@ function listItems(
     .prepare(
       `
       SELECT i.*, a.poster, a.background
+        ${personId === undefined ? "" : `,
+          (SELECT ip.character
+           FROM item_people ip
+           WHERE ip.item_id = i.id AND ip.person_id = @person_id
+           LIMIT 1) AS character`}
       FROM items i
       LEFT JOIN artwork a ON a.item_id = i.id
       ${where}
@@ -197,7 +203,11 @@ function listItems(
       LIMIT @limit OFFSET @offset
     `,
     )
-    .all({ ...parameters, ...page });
+    .all({
+      ...parameters,
+      ...(personId === undefined ? {} : { person_id: personId }),
+      ...page,
+    });
 
   return {
     data,
@@ -261,7 +271,7 @@ function getItem(id: number): unknown | undefined {
     people: db
       .prepare(
         `
-        SELECT p.id, p.name, ip.role
+        SELECT p.id, p.name, ip.role, ip.character
         FROM people p
         JOIN item_people ip ON ip.person_id = p.id
         WHERE ip.item_id = @id
@@ -432,6 +442,19 @@ function handleRequest(
     : undefined;
   if (relation) {
     if (!idText && parts.length === 3) {
+      if (resource === "people") {
+        sendJson(
+          response,
+          200,
+          db
+            .prepare(
+              "SELECT id, name, profile_picture FROM people ORDER BY name COLLATE NOCASE",
+            )
+            .all(),
+        );
+        return;
+      }
+
       sendJson(
         response,
         200,
@@ -441,6 +464,48 @@ function handleRequest(
           )
           .all(),
       );
+      return;
+    }
+
+    if (resource === "people" && idText && !action && parts.length === 4) {
+      const id = parseId(idText);
+      if (id === null) {
+        sendJson(response, 400, { error: "Invalid people ID" });
+        return;
+      }
+
+      const person = db
+        .prepare(
+          `
+          SELECT p.id, p.name, p.profile_picture, p.birth_date, p.death_date,
+            (
+              SELECT COUNT(DISTINCT ip.item_id)
+              FROM item_people ip
+              WHERE ip.person_id = p.id
+            ) AS item_count
+          FROM people p
+          WHERE p.id = @id
+        `,
+        )
+        .get({ id }) as Record<string, unknown> | undefined;
+
+      if (!person) {
+        sendJson(response, 404, { error: "Person not found" });
+        return;
+      }
+
+      const roles = db
+        .prepare(
+          `
+          SELECT DISTINCT role
+          FROM item_people
+          WHERE person_id = @id
+          ORDER BY role COLLATE NOCASE
+        `,
+        )
+        .all({ id }) as { role: string }[];
+
+      sendJson(response, 200, { ...person, roles: roles.map(({ role }) => role) });
       return;
     }
 
@@ -463,7 +528,7 @@ function handleRequest(
       const where = `WHERE i.id IN (
         SELECT item_id FROM ${relation.junction} WHERE ${relation.foreignKey} = @id
       )`;
-      const result = listItems(where, { id }, url);
+          const result = listItems(where, { id }, url, resource === "people" ? id : undefined);
       sendJson(
         response,
         result ? 200 : 400,
