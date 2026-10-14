@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
+import { Home, Moon, Sun } from "@lucide/vue";
 
 type SectionKey =
   | "titles"
@@ -103,6 +104,7 @@ const pagination = ref<PaginatedItems["pagination"] | null>(null);
 const loading = ref(false);
 const loadingMore = ref(false);
 const error = ref("");
+const isDark = ref(window.localStorage.getItem("theme") === "dark");
 let requestVersion = 0;
 
 const parts = computed(() => path.value.split("/").filter(Boolean));
@@ -307,6 +309,12 @@ function formatType(type: string) {
   return type === "show" ? "Series" : type === "movie" ? "Movie" : type;
 }
 
+// Toggle the color scheme and remember the selection for the next visit.
+function toggleTheme() {
+  isDark.value = !isDark.value;
+  window.localStorage.setItem("theme", isDark.value ? "dark" : "light");
+}
+
 onMounted(() => {
   window.addEventListener("popstate", syncPath);
   void loadPage();
@@ -315,63 +323,65 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
 </script>
 
 <template>
-  <header
-    class="flex min-h-[58px] items-center justify-between gap-5 border-b border-neutral-300 px-[5vw] max-[760px]:block max-[760px]:pt-[15px]"
+  <div
+    :class="[
+      'min-h-screen bg-white text-neutral-950 dark:bg-neutral-950 dark:text-neutral-100',
+      { dark: isDark },
+    ]"
   >
-    <a
-      class="grid h-9 w-9 shrink-0 place-items-center border border-transparent no-underline hover:border-neutral-400 focus-visible:border-neutral-400"
-      href="/"
-      aria-label="Home"
-      title="Home"
-      @click="navigate($event, '/')"
-    >
-      <svg
-        aria-hidden="true"
-        width="20"
-        height="20"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="1.75"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
-        <path d="m3 10 9-7 9 7" />
-        <path d="M5 9v12h14V9" />
-        <path d="M9 21v-7h6v7" />
-      </svg>
-    </a>
-    <nav
-      class="flex flex-wrap gap-[18px] max-[760px]:mt-[5px] max-[760px]:flex-nowrap max-[760px]:gap-4 max-[760px]:overflow-x-auto"
-      aria-label="Main sections"
+    <header
+      class="grid min-h-[58px] grid-cols-[36px_minmax(0,1fr)_36px] items-center gap-3 border-b border-neutral-300 px-[5vw] dark:border-neutral-700"
     >
       <a
-        v-for="entry in sections"
-        :key="entry.key"
-        :class="[
-          'shrink-0 border-b-2 border-transparent py-5 text-xs no-underline max-[760px]:py-3',
-          section?.key === entry.key
-            ? 'border-neutral-950'
-            : 'hover:border-neutral-950',
-        ]"
-        :href="routeFor(entry.key)"
-        :aria-current="section?.key === entry.key ? 'page' : undefined"
-        @click="navigate($event, routeFor(entry.key))"
-        >{{ entry.label }}</a
+        class="grid h-9 w-9 place-items-center justify-self-start text-neutral-900 hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-neutral-500 dark:text-neutral-100 dark:hover:bg-neutral-800"
+        href="/"
+        aria-label="Home"
+        title="Home"
+        @click="navigate($event, '/')"
       >
-    </nav>
-  </header>
+        <Home :size="20" :stroke-width="1.75" aria-hidden="true" />
+      </a>
+      <nav
+        class="mx-auto flex min-w-0 max-w-full items-center justify-center gap-[18px] overflow-x-auto whitespace-nowrap max-[760px]:justify-start max-[760px]:gap-4"
+        aria-label="Main sections"
+      >
+        <a
+          v-for="entry in sections"
+          :key="entry.key"
+          :class="[
+            'shrink-0 border-b-2 border-transparent py-5 text-xs no-underline max-[760px]:py-3',
+            section?.key === entry.key
+              ? 'border-neutral-950 dark:border-white'
+              : 'hover:border-neutral-950 dark:hover:border-white',
+          ]"
+          :href="routeFor(entry.key)"
+          :aria-current="section?.key === entry.key ? 'page' : undefined"
+          @click="navigate($event, routeFor(entry.key))"
+          >{{ entry.label }}</a
+        >
+      </nav>
+      <button
+        class="grid h-9 w-9 place-items-center justify-self-end text-neutral-900 hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-neutral-500 dark:text-neutral-100 dark:hover:bg-neutral-800"
+        type="button"
+        :aria-label="isDark ? 'Switch to light mode' : 'Switch to dark mode'"
+        :title="isDark ? 'Switch to light mode' : 'Switch to dark mode'"
+        @click="toggleTheme"
+      >
+        <Sun v-if="isDark" :size="20" :stroke-width="1.75" aria-hidden="true" />
+        <Moon v-else :size="20" :stroke-width="1.75" aria-hidden="true" />
+      </button>
+    </header>
 
-  <main
-    class="mx-auto min-h-[calc(100vh-58px)] w-[90%] max-w-[1060px] py-[52px] max-[760px]:py-[34px]"
-  >
+    <main
+      class="mx-auto min-h-[calc(100vh-58px)] w-[90%] max-w-[1060px] py-[52px] max-[760px]:py-[34px]"
+    >
     <div
       class="mb-7 flex items-end justify-between gap-6 max-[760px]:flex-col max-[760px]:items-start max-[760px]:gap-[14px]"
     >
       <div>
         <p
           v-if="!isHome && section"
-          class="mb-[13px] flex gap-2 text-xs text-neutral-600"
+          class="mb-[13px] flex gap-2 text-xs text-neutral-600 dark:text-neutral-400"
         >
           <a href="/" @click="navigate($event, '/')">Home</a>
           <span>/</span>
@@ -389,19 +399,19 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
         </h1>
         <p
           v-if="isHome"
-          class="mt-[9px] max-w-[660px] text-sm leading-relaxed text-neutral-600"
+          class="mt-[9px] max-w-[660px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400"
         >
           Choose a section to explore.
         </p>
         <p
           v-else-if="!isDetail && section"
-          class="mt-[9px] max-w-[660px] text-sm leading-relaxed text-neutral-600"
+          class="mt-[9px] max-w-[660px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400"
         >
           {{ section.description }}
         </p>
         <p
           v-else-if="selectedItem?.summary"
-          class="mt-[9px] max-w-[660px] text-sm leading-relaxed text-neutral-600"
+          class="mt-[9px] max-w-[660px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400"
         >
           {{ selectedItem.summary }}
         </p>
@@ -409,7 +419,7 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
       <input
         v-if="!isHome && !selectedTitle && !loading && !error"
         v-model="query"
-        class="h-[34px] w-[min(250px,38vw)] border border-neutral-400 bg-white px-2 text-[13px] text-neutral-950 outline-none focus:border-neutral-950 max-[760px]:w-full"
+        class="h-[34px] w-[min(250px,38vw)] border border-neutral-400 bg-white px-2 text-[13px] text-neutral-950 outline-none focus:border-neutral-950 max-[760px]:w-full dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:focus:border-neutral-300"
         type="search"
         :placeholder="
           section?.key === 'titles' || isDetail ? 'Search titles' : 'Search'
@@ -418,12 +428,12 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
       />
     </div>
 
-    <p v-if="loading" class="px-1 py-[18px] text-xs text-neutral-600">
+    <p v-if="loading" class="px-1 py-[18px] text-xs text-neutral-600 dark:text-neutral-400">
       Loading…
     </p>
     <p
       v-else-if="error"
-      class="border-y border-red-700 py-[14px] text-[13px] text-red-800"
+      class="border-y border-red-700 py-[14px] text-[13px] text-red-800 dark:border-red-400 dark:text-red-300"
       role="alert"
     >
       {{ error }}
@@ -431,18 +441,18 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
 
     <section
       v-else-if="isHome"
-      class="border-t border-neutral-300"
+      class="border-t border-neutral-300 dark:border-neutral-700"
       aria-label="Library sections"
     >
       <a
         v-for="entry in sections"
         :key="entry.key"
-        class="grid min-h-[53px] grid-cols-[minmax(130px,1fr)_minmax(150px,2fr)_24px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100 max-[480px]:grid-cols-[1fr_24px]"
+        class="grid min-h-[53px] grid-cols-[minmax(130px,1fr)_minmax(150px,2fr)_24px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100 max-[480px]:grid-cols-[1fr_24px] dark:border-neutral-700 dark:hover:bg-neutral-900"
         :href="routeFor(entry.key)"
         @click="navigate($event, routeFor(entry.key))"
       >
         <span class="text-sm font-medium">{{ entry.label }}</span>
-        <span class="text-xs text-neutral-600 max-[480px]:hidden">{{
+        <span class="text-xs text-neutral-600 max-[480px]:hidden dark:text-neutral-400">{{
           entry.description
         }}</span>
         <span class="text-right" aria-hidden="true">→</span>
@@ -461,23 +471,23 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
       />
       <dl class="m-0 grid gap-0">
         <div
-          class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr]"
+          class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
         >
-          <dt class="text-neutral-600">Type</dt>
+          <dt class="text-neutral-600 dark:text-neutral-400">Type</dt>
           <dd class="m-0">{{ formatType(selectedItem.type) }}</dd>
         </div>
         <div
           v-if="selectedItem.year"
-          class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr]"
+          class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
         >
-          <dt class="text-neutral-600">Year</dt>
+          <dt class="text-neutral-600 dark:text-neutral-400">Year</dt>
           <dd class="m-0">{{ selectedItem.year }}</dd>
         </div>
         <div
           v-if="selectedItem.content_rating"
-          class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr]"
+          class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
         >
-          <dt class="text-neutral-600">Content rating</dt>
+          <dt class="text-neutral-600 dark:text-neutral-400">Content rating</dt>
           <dd class="m-0">
             <a
               :href="routeFor('content-ratings', selectedItem.content_rating)"
@@ -493,16 +503,16 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
         </div>
         <div
           v-if="selectedItem.studio"
-          class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr]"
+          class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
         >
-          <dt class="text-neutral-600">Studio</dt>
+          <dt class="text-neutral-600 dark:text-neutral-400">Studio</dt>
           <dd class="m-0">{{ selectedItem.studio }}</dd>
         </div>
         <div
           v-if="selectedItem.season_count"
-          class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr]"
+          class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
         >
-          <dt class="text-neutral-600">Seasons</dt>
+          <dt class="text-neutral-600 dark:text-neutral-400">Seasons</dt>
           <dd class="m-0">{{ selectedItem.season_count }}</dd>
         </div>
         <template
@@ -516,9 +526,9 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
         >
           <div
             v-if="selectedItem[resource]?.length"
-            class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr]"
+            class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
           >
-            <dt class="text-neutral-600">
+            <dt class="text-neutral-600 dark:text-neutral-400">
               {{
                 resource === "people"
                   ? "People"
@@ -545,33 +555,33 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
       class="border-t border-neutral-300"
       aria-label="Titles in category"
     >
-      <p class="mb-0 px-1 pb-3 text-xs text-neutral-600">
+      <p class="mb-0 px-1 pb-3 text-xs text-neutral-600 dark:text-neutral-400">
         {{ pagination?.total ?? items.length }} titles
       </p>
       <a
         v-for="item in visibleItems"
         :key="item.id"
-        class="grid min-h-[53px] grid-cols-[1fr_70px_90px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100"
+        class="grid min-h-[53px] grid-cols-[1fr_70px_90px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
         :href="routeFor('titles', item.id)"
         @click="navigate($event, routeFor('titles', item.id))"
       >
         <span class="text-sm font-medium">{{ item.title }}</span>
-        <span class="text-right text-xs text-neutral-600">{{
+        <span class="text-right text-xs text-neutral-600 dark:text-neutral-400">{{
           item.year ?? ""
         }}</span>
-        <span class="text-right text-xs text-neutral-600">{{
+        <span class="text-right text-xs text-neutral-600 dark:text-neutral-400">{{
           formatType(item.type)
         }}</span>
       </a>
       <p
         v-if="!visibleItems.length"
-        class="px-1 py-[18px] text-xs text-neutral-600"
+        class="px-1 py-[18px] text-xs text-neutral-600 dark:text-neutral-400"
       >
         No titles found.
       </p>
       <button
         v-if="pagination && items.length < pagination.total"
-        class="mt-[18px] border border-neutral-500 bg-white px-3 py-[9px] text-xs hover:bg-neutral-100 disabled:cursor-wait disabled:text-neutral-500"
+        class="mt-[18px] border border-neutral-500 bg-white px-3 py-[9px] text-xs hover:bg-neutral-100 disabled:cursor-wait disabled:text-neutral-500 dark:border-neutral-600 dark:bg-neutral-950 dark:hover:bg-neutral-900 dark:disabled:text-neutral-500"
         :disabled="loadingMore"
         @click="loadMore"
       >
@@ -581,36 +591,36 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
 
     <section
       v-else-if="section?.key === 'titles'"
-      class="border-t border-neutral-300"
+      class="border-t border-neutral-300 dark:border-neutral-700"
       aria-label="Titles"
     >
-      <p class="mb-0 px-1 pb-3 text-xs text-neutral-600">
+      <p class="mb-0 px-1 pb-3 text-xs text-neutral-600 dark:text-neutral-400">
         {{ pagination?.total ?? items.length }} titles
       </p>
       <a
         v-for="item in visibleItems"
         :key="item.id"
-        class="grid min-h-[53px] grid-cols-[1fr_70px_90px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100"
+        class="grid min-h-[53px] grid-cols-[1fr_70px_90px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
         :href="routeFor('titles', item.id)"
         @click="navigate($event, routeFor('titles', item.id))"
       >
         <span class="text-sm font-medium">{{ item.title }}</span>
-        <span class="text-right text-xs text-neutral-600">{{
+        <span class="text-right text-xs text-neutral-600 dark:text-neutral-400">{{
           item.year ?? ""
         }}</span>
-        <span class="text-right text-xs text-neutral-600">{{
+        <span class="text-right text-xs text-neutral-600 dark:text-neutral-400">{{
           formatType(item.type)
         }}</span>
       </a>
       <p
         v-if="!visibleItems.length"
-        class="px-1 py-[18px] text-xs text-neutral-600"
+        class="px-1 py-[18px] text-xs text-neutral-600 dark:text-neutral-400"
       >
         No titles found.
       </p>
       <button
         v-if="pagination && items.length < pagination.total"
-        class="mt-[18px] border border-neutral-500 bg-white px-3 py-[9px] text-xs hover:bg-neutral-100 disabled:cursor-wait disabled:text-neutral-500"
+        class="mt-[18px] border border-neutral-500 bg-white px-3 py-[9px] text-xs hover:bg-neutral-100 disabled:cursor-wait disabled:text-neutral-500 dark:border-neutral-600 dark:bg-neutral-950 dark:hover:bg-neutral-900 dark:disabled:text-neutral-500"
         :disabled="loadingMore"
         @click="loadMore"
       >
@@ -620,26 +630,27 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
 
     <section
       v-else-if="section"
-      class="border-t border-neutral-300"
+      class="border-t border-neutral-300 dark:border-neutral-700"
       :aria-label="section.label"
     >
       <a
         v-for="entry in visibleEntries"
         :key="entry.id"
-        class="grid min-h-[53px] grid-cols-[1fr_1fr_24px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100"
+        class="grid min-h-[53px] grid-cols-[1fr_1fr_24px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
         :href="resourceRoute(section.key, entry)"
         @click="navigate($event, resourceRoute(section.key, entry))"
       >
         <span class="text-sm font-medium">{{ entryName(entry) }}</span>
-        <span class="text-xs text-neutral-600">{{ entry.type ?? "" }}</span>
+        <span class="text-xs text-neutral-600 dark:text-neutral-400">{{ entry.type ?? "" }}</span>
         <span class="text-right" aria-hidden="true">→</span>
       </a>
       <p
         v-if="!visibleEntries.length"
-        class="px-1 py-[18px] text-xs text-neutral-600"
+        class="px-1 py-[18px] text-xs text-neutral-600 dark:text-neutral-400"
       >
         No categories found.
       </p>
     </section>
-  </main>
+    </main>
+  </div>
 </template>
