@@ -443,6 +443,37 @@ function handleRequest(
   if (relation) {
     if (!idText && parts.length === 3) {
       if (resource === "people") {
+        if (
+          url.searchParams.has("limit") ||
+          url.searchParams.has("offset")
+        ) {
+          const page = pagination(url);
+          if (!page) {
+            sendJson(response, 400, { error: "Invalid pagination parameters" });
+            return;
+          }
+
+          const count = db
+            .prepare("SELECT COUNT(*) AS total FROM people")
+            .get() as { total: number };
+          const data = db
+            .prepare(
+              `
+              SELECT id, name, profile_picture
+              FROM people
+              ORDER BY name COLLATE NOCASE
+              LIMIT @limit OFFSET @offset
+            `,
+            )
+            .all(page);
+
+          sendJson(response, 200, {
+            data,
+            pagination: { ...page, total: count.total },
+          });
+          return;
+        }
+
         sendJson(
           response,
           200,

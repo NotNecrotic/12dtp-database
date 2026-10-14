@@ -47,8 +47,8 @@ interface Item {
   people?: (Entry & { role?: string })[];
 }
 
-interface PaginatedItems {
-  data: Item[];
+interface Paginated<T> {
+  data: T[];
   pagination: { limit: number; offset: number; total: number };
 }
 
@@ -101,10 +101,11 @@ const apiPrefix = "/api/v1";
 const path = ref(window.location.pathname);
 const query = ref("");
 const entries = ref<Entry[]>([]);
+const entriesPagination = ref<Paginated<Entry>["pagination"] | null>(null);
 const personProfile = ref<Entry | null>(null);
 const items = ref<Item[]>([]);
 const selectedItem = ref<Item | null>(null);
-const pagination = ref<PaginatedItems["pagination"] | null>(null);
+const pagination = ref<Paginated<Item>["pagination"] | null>(null);
 const loading = ref(false);
 const loadingMore = ref(false);
 const error = ref("");
@@ -165,9 +166,9 @@ async function api<T>(endpoint: string): Promise<T> {
   return payload as T;
 }
 
-// Fetch one page of items using the backend's pagination parameters.
+// Fetch one page of data using the backend's pagination parameters.
 function getPage(endpoint: string, offset = 0) {
-  return api<PaginatedItems>(`${endpoint}?limit=100&offset=${offset}`);
+  return api<Paginated<Item>>(`${endpoint}?limit=100&offset=${offset}`);
 }
 
 // Map a section key to the API route that lists its categories.
@@ -180,6 +181,7 @@ async function loadPage() {
   const version = ++requestVersion;
   query.value = "";
   entries.value = [];
+  entriesPagination.value = null;
   personProfile.value = null;
   items.value = [];
   selectedItem.value = null;
@@ -203,6 +205,13 @@ async function loadPage() {
         if (version !== requestVersion) return;
         items.value = result.data;
         pagination.value = result.pagination;
+      } else if (currentSection.key === "people") {
+        const result = await api<Paginated<Entry>>(
+          `${entryEndpoint(currentSection.key)}?limit=100&offset=0`,
+        );
+        if (version !== requestVersion) return;
+        entries.value = result.data;
+        entriesPagination.value = result.pagination;
       } else {
         const result = await api<Entry[]>(entryEndpoint(currentSection.key));
         if (version !== requestVersion) return;
@@ -259,7 +268,25 @@ async function loadPage() {
 
 // Append the next page of titles to the current section or category results.
 async function loadMore() {
-  if (!section.value || !pagination.value || loadingMore.value) return;
+  if (!section.value || loadingMore.value) return;
+  if (section.value.key === "people" && entriesPagination.value) {
+    loadingMore.value = true;
+    error.value = "";
+    try {
+      const result = await api<Paginated<Entry>>(
+        `${entryEndpoint("people")}?limit=100&offset=${entries.value.length}`,
+      );
+      entries.value = [...entries.value, ...result.data];
+      entriesPagination.value = result.pagination;
+    } catch (cause) {
+      error.value =
+        cause instanceof Error ? cause.message : "Could not load more people.";
+    } finally {
+      loadingMore.value = false;
+    }
+    return;
+  }
+  if (!pagination.value) return;
   loadingMore.value = true;
   error.value = "";
   try {
@@ -770,6 +797,18 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
         >
           No categories found.
         </p>
+        <button
+          v-if="
+            section.key === 'people' &&
+            entriesPagination &&
+            entries.length < entriesPagination.total
+          "
+          class="mt-[18px] border border-neutral-500 bg-white px-3 py-[9px] text-xs hover:bg-neutral-100 disabled:cursor-wait disabled:text-neutral-500 dark:border-neutral-600 dark:bg-neutral-950 dark:hover:bg-neutral-900 dark:disabled:text-neutral-500"
+          :disabled="loadingMore"
+          @click="loadMore"
+        >
+          {{ loadingMore ? "Loading…" : "Load more" }}
+        </button>
       </section>
     </main>
   </div>
