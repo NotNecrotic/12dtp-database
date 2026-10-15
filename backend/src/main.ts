@@ -285,19 +285,21 @@ function listItems(
   if (options.type) filters.push("i.type = @type");
   if (options.contentRating) filters.push("i.content_rating = @content_rating");
   if (term) {
-    filters.push(`(
-        i.title LIKE @search ESCAPE '\\'
-        OR CAST(i.year AS TEXT) LIKE @search ESCAPE '\\'
-        OR i.type LIKE @search ESCAPE '\\'
-        OR i.content_rating LIKE @search ESCAPE '\\'
-        ${personId === undefined ? "" : `
-          OR EXISTS (
+    const searchFields = [
+      "i.title LIKE @search ESCAPE '\\'",
+      ...(personId === undefined
+        ? []
+        : [
+            `
+            EXISTS (
             SELECT 1 FROM item_people ip
             WHERE ip.item_id = i.id
               AND ip.person_id = @person_id
               AND ip.character LIKE @search ESCAPE '\\'
-          )`}
-      )`);
+            )`,
+          ]),
+    ];
+    filters.push(`(${searchFields.join(" OR ")})`);
   }
   const conditions = filters.filter(Boolean);
   const filteredWhere = conditions.length
