@@ -8,7 +8,7 @@
 - [ ] **Backend**:
   - [x] Config script that loads .env
   - [x] API routes for frontend to use
-  - [ ] sort & filter items - query db + api function
+  - [x] sort & filter items - query db + api function
 
 - [ ] **Frontend**:
   - [x] Proxy local paths to backend e.g. /api/v1 => backend
@@ -17,4 +17,4 @@
   - [x] Load API data into pages
   - [x] styled pages using tailwind
   - [ ] user age grouping
-  - [ ] sort & filter items - api calling
+  - [x] sort & filter items - api calling

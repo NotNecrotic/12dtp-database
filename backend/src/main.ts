@@ -177,6 +177,36 @@ function escapedSearchPattern(term: string): string {
   return `%${term.replace(/[\\%_]/g, "\\$&")}%`;
 }
 
+interface ItemListOptions {
+  type?: string;
+  contentRating?: string;
+  sortColumn: "title" | "year";
+  sortDirection: "ASC" | "DESC";
+}
+
+function itemListOptions(url: URL): ItemListOptions | null {
+  const type = url.searchParams.get("type") ?? "";
+  const contentRating = url.searchParams.get("content_rating") ?? "";
+  const sort = url.searchParams.get("sort") ?? "title";
+  const order = url.searchParams.get("order") ?? "asc";
+
+  if (
+    (type && type !== "movie" && type !== "show") ||
+    contentRating.length > 50 ||
+    (sort !== "title" && sort !== "year") ||
+    (order !== "asc" && order !== "desc")
+  ) {
+    return null;
+  }
+
+  return {
+    ...(type ? { type } : {}),
+    ...(contentRating ? { contentRating } : {}),
+    sortColumn: sort,
+    sortDirection: order === "desc" ? "DESC" : "ASC",
+  };
+}
+
 function hasListParameters(url: URL): boolean {
   return (
     url.searchParams.has("limit") ||
@@ -200,7 +230,16 @@ function listRows(
 } | null {
   const page = pagination(url);
   const term = searchTerm(url);
-  if (!page || term.length > 200) return null;
+  const sort = url.searchParams.get("sort") ?? "name";
+  const order = url.searchParams.get("order") ?? "asc";
+  if (
+    !page ||
+    term.length > 200 ||
+    sort !== "name" ||
+    (order !== "asc" && order !== "desc")
+  ) {
+    return null;
+  }
 
   const filters = [baseWhere];
   const values: Record<string, number | string> = { ...parameters };
@@ -222,7 +261,7 @@ function listRows(
       SELECT ${columns}
       FROM ${from}
       ${where}
-      ORDER BY ${orderBy} COLLATE NOCASE, id
+      ORDER BY ${orderBy} COLLATE NOCASE ${order === "desc" ? "DESC" : "ASC"}, id
       LIMIT @limit OFFSET @offset
     `,
     )
@@ -243,13 +282,16 @@ function listItems(
 } | null {
   // Validate pagination before using it in the SQL query.
   const page = pagination(url);
-
+  const options = itemListOptions(url);
   const term = searchTerm(url);
-  if (!page || term.length > 200) {
+  if (!page || !options || term.length > 200) {
     return null;
   }
-  const searchWhere = term
-    ? `${where ? " AND" : " WHERE"} (
+  const filters = [where.replace(/^WHERE\s+/i, "")];
+  if (options.type) filters.push("i.type = @type");
+  if (options.contentRating) filters.push("i.content_rating = @content_rating");
+  if (term) {
+    filters.push(`(
         i.title LIKE @search ESCAPE '\\'
         OR CAST(i.year AS TEXT) LIKE @search ESCAPE '\\'
         OR i.type LIKE @search ESCAPE '\\'
@@ -261,11 +303,18 @@ function listItems(
               AND ip.person_id = @person_id
               AND ip.character LIKE @search ESCAPE '\\'
           )`}
-      )`
+      )`);
+  }
+  const conditions = filters.filter(Boolean);
+  const filteredWhere = conditions.length
+    ? `WHERE ${conditions.join(" AND ")}`
     : "";
-  const filteredWhere = `${where}${searchWhere}`;
-  const values = {
+  const values: Record<string, number | string> = {
     ...parameters,
+    ...(options.type ? { type: options.type } : {}),
+    ...(options.contentRating
+      ? { content_rating: options.contentRating }
+      : {}),
     ...(term ? { search: escapedSearchPattern(term) } : {}),
     ...(term && personId !== undefined ? { person_id: personId } : {}),
   };
@@ -287,7 +336,7 @@ function listItems(
       FROM items i
       LEFT JOIN artwork a ON a.item_id = i.id
       ${filteredWhere}
-      ORDER BY i.title COLLATE NOCASE, i.id
+      ORDER BY i.${options.sortColumn} COLLATE NOCASE ${options.sortDirection}, i.id
       LIMIT @limit OFFSET @offset
     `,
     )

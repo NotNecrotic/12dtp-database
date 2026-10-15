@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ChevronRight, Home, Moon, Sun } from "@lucide/vue";
+import ListControls from "@/components/ListControls.vue";
 import LoadMoreButton from "@/components/LoadMoreButton.vue";
 import ListResults from "@/components/ListResults.vue";
 
@@ -102,7 +103,13 @@ const sections: Section[] = [
 const apiPrefix = "/api/v1";
 const path = ref(window.location.pathname);
 const query = ref("");
+const sortOption = ref("title-asc");
+const entrySortOption = ref("name-asc");
+const typeFilter = ref("");
+const ratingFilter = ref("");
 const entries = ref<Entry[]>([]);
+const contentRatings = ref<string[]>([]);
+const contentRatingError = ref("");
 const personProfile = ref<Entry | null>(null);
 const items = ref<Item[]>([]);
 const selectedItem = ref<Item | null>(null);
@@ -114,7 +121,7 @@ const error = ref("");
 const isDark = ref(window.localStorage.getItem("theme") === "dark");
 let requestVersion = 0;
 let searchTimer: ReturnType<typeof setTimeout> | undefined;
-let suppressQueryWatch = false;
+let suppressSearchWatch = false;
 
 const parts = computed(() => path.value.split("/").filter(Boolean));
 const section = computed(() =>
@@ -130,6 +137,15 @@ const selectedTitle = computed(
 );
 const isHome = computed(() => parts.value.length === 0);
 const isDetail = computed(() => parts.value.length > 1);
+const hasItemFilters = computed(
+  () =>
+    Boolean(
+      query.value.trim() ||
+        typeFilter.value ||
+        ratingFilter.value ||
+        sortOption.value !== "title-asc",
+    ),
+);
 const pageHeading = computed(() => {
   if (isHome.value) return "Media library";
   if (selectedTitle.value && selectedItem.value)
@@ -152,13 +168,33 @@ async function api<T>(endpoint: string): Promise<T> {
   return payload as T;
 }
 
-// Fetch a page from the full matching result set using server-side search.
-function getPage<T = Item>(endpoint: string, offset = 0, term = "") {
+// Fetch a page from the full matching, sorted, and filtered result set.
+function getPage<T = Item>(
+  endpoint: string,
+  offset = 0,
+  term = "",
+  itemFilters = false,
+  entryFilters = false,
+) {
   const params = new URLSearchParams({
     limit: "100",
     offset: String(offset),
   });
   if (term) params.set("q", term);
+  if (itemFilters) {
+    const [sort = "title", order = "asc"] = sortOption.value.split("-");
+    params.set("sort", sort);
+    params.set("order", order);
+    if (typeFilter.value) params.set("type", typeFilter.value);
+    if (ratingFilter.value) {
+      params.set("content_rating", ratingFilter.value);
+    }
+  }
+  if (entryFilters) {
+    const [, order = "asc"] = entrySortOption.value.split("-");
+    params.set("sort", "name");
+    params.set("order", order);
+  }
   return api<Paginated<T>>(`${endpoint}?${params.toString()}`);
 }
 
@@ -172,9 +208,13 @@ async function loadPage() {
   const version = ++requestVersion;
   if (searchTimer) clearTimeout(searchTimer);
   searching.value = false;
-  suppressQueryWatch = true;
+  suppressSearchWatch = true;
   query.value = "";
-  suppressQueryWatch = false;
+  sortOption.value = "title-asc";
+  entrySortOption.value = "name-asc";
+  typeFilter.value = "";
+  ratingFilter.value = "";
+  suppressSearchWatch = false;
   entries.value = [];
   personProfile.value = null;
   items.value = [];
@@ -195,13 +235,17 @@ async function loadPage() {
   try {
     if (routeParts.length === 1) {
       if (currentSection.key === "titles") {
-        const result = await getPage("/items");
+        const result = await getPage("/items", 0, "", true);
         if (version !== requestVersion) return;
         items.value = result.data;
         pagination.value = result.pagination;
       } else {
         const result = await getPage<Entry>(
           entryEndpoint(currentSection.key),
+          0,
+          "",
+          false,
+          true,
         );
         if (version !== requestVersion) return;
         entries.value = result.data;
@@ -219,7 +263,7 @@ async function loadPage() {
       if (version !== requestVersion) return;
       personProfile.value = profile;
 
-      const result = await getPage(`/people/${personId}/items`);
+      const result = await getPage(`/people/${personId}/items`, 0, "", true);
       if (version !== requestVersion) return;
       items.value = result.data;
       pagination.value = result.pagination;
@@ -239,6 +283,9 @@ async function loadPage() {
       const categoryId = encodeURIComponent(String(category.id));
       const result = await getPage(
         `/${currentSection.key}/${categoryId}/items`,
+        0,
+        "",
+        true,
       );
       if (version !== requestVersion) return;
       items.value = result.data;
@@ -262,28 +309,36 @@ async function searchCurrentPage(term: string, version: number) {
   const currentSection = sections.find(
     (candidate) => candidate.key === routeParts[0],
   );
-  if (!currentSection || routeParts.length === 0) {
+  if (!currentSection && routeParts.length > 0) {
     searching.value = false;
     return;
   }
   error.value = "";
-
   try {
-    if (routeParts.length === 1 && currentSection.key !== "titles") {
+    if (
+      routeParts.length === 0 ||
+      (currentSection?.key === "titles" && routeParts.length > 1)
+    ) {
+      const result = await getPage("/items", 0, term, true);
+      if (version !== requestVersion) return;
+      items.value = result.data;
+      pagination.value = result.pagination;
+    } else if (routeParts.length === 1 && currentSection) {
       const result = await getPage<Entry>(
         entryEndpoint(currentSection.key),
         0,
         term,
+        false,
+        true,
       );
       if (version !== requestVersion) return;
       entries.value = result.data;
       pagination.value = result.pagination;
     } else {
+      if (!currentSection) return;
       const endpoint =
-        routeParts.length === 1
-          ? "/items"
-          : `/${currentSection.key}/${encodeURIComponent(routeParts[1] ?? "")}/items`;
-      const result = await getPage(endpoint, 0, term);
+        `/${currentSection.key}/${encodeURIComponent(routeParts[1] ?? "")}/items`;
+      const result = await getPage(endpoint, 0, term, true);
       if (version !== requestVersion) return;
       items.value = result.data;
       pagination.value = result.pagination;
@@ -302,8 +357,9 @@ async function searchCurrentPage(term: string, version: number) {
 
 // Append the next page of the current search results.
 async function loadMore() {
+  const currentSection = section.value;
   if (
-    !section.value ||
+    (!currentSection && !isHome.value) ||
     !pagination.value ||
     loadingMore.value ||
     searching.value
@@ -315,15 +371,20 @@ async function loadMore() {
   try {
     const routeParts = path.value.split("/").filter(Boolean);
     let endpoint = "/items";
-    if (routeParts.length > 1 && section.value.key !== "titles") {
-      endpoint = `/${section.value.key}/${encodeURIComponent(routeParts[1] ?? "")}/items`;
+    if (routeParts.length > 1 && currentSection?.key !== "titles") {
+      endpoint = `/${currentSection?.key}/${encodeURIComponent(routeParts[1] ?? "")}/items`;
     }
-    const isEntryList = routeParts.length === 1 && section.value.key !== "titles";
-    if (isEntryList) {
+    const isEntryList =
+      routeParts.length === 1 &&
+      currentSection !== undefined &&
+      currentSection.key !== "titles";
+    if (isEntryList && currentSection) {
       const result = await getPage<Entry>(
-        entryEndpoint(section.value.key),
+        entryEndpoint(currentSection.key),
         entries.value.length,
         query.value.trim(),
+        false,
+        true,
       );
       if (version !== requestVersion) return;
       entries.value = [...entries.value, ...result.data];
@@ -333,6 +394,7 @@ async function loadMore() {
         endpoint,
         items.value.length,
         query.value.trim(),
+        true,
       );
       if (version !== requestVersion) return;
       items.value = [...items.value, ...result.data];
@@ -349,9 +411,9 @@ async function loadMore() {
 }
 
 watch(
-  query,
-  (term) => {
-    if (suppressQueryWatch) return;
+  [query, sortOption, entrySortOption, typeFilter, ratingFilter],
+  ([term]) => {
+    if (suppressSearchWatch) return;
     if (searchTimer) clearTimeout(searchTimer);
     const version = ++requestVersion;
     searching.value = true;
@@ -423,6 +485,16 @@ function toggleTheme() {
 onMounted(() => {
   window.addEventListener("popstate", syncPath);
   void loadPage();
+  void api<Entry[]>("/content-ratings")
+    .then((ratings) => {
+      contentRatings.value = ratings.map(entryName);
+    })
+    .catch((cause: unknown) => {
+      contentRatingError.value =
+        cause instanceof Error
+          ? `Could not load rating options: ${cause.message}`
+          : "Could not load rating options.";
+    });
 });
 onUnmounted(() => {
   window.removeEventListener("popstate", syncPath);
@@ -526,17 +598,6 @@ onUnmounted(() => {
             {{ selectedItem.summary }}
           </p>
         </div>
-        <input
-          v-if="!isHome && !selectedTitle && !loading && !error"
-          v-model="query"
-          class="h-[34px] w-[min(250px,38vw)] border border-neutral-400 bg-white px-2 text-[13px] text-neutral-950 outline-none focus:border-neutral-950 max-[760px]:w-full dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:focus:border-neutral-300"
-          type="search"
-          maxlength="200"
-          :placeholder="
-            section?.key === 'titles' || isDetail ? 'Search titles' : 'Search'
-          "
-          aria-label="Search"
-        />
       </div>
 
       <p
@@ -553,11 +614,45 @@ onUnmounted(() => {
         {{ error }}
       </p>
 
+      <ListResults
+        v-else-if="hasItemFilters && (isHome || selectedTitle)"
+        :items="items"
+        :total="pagination?.total ?? items.length"
+        :format-type="formatType"
+        :query="query"
+        :sort="sortOption"
+        :type-filter="typeFilter"
+        :rating-filter="ratingFilter"
+        :content-ratings="contentRatings"
+        :content-rating-error="contentRatingError"
+        :loading-more="loadingMore"
+        :searching="searching"
+        @navigate="navigate"
+        @load-more="loadMore"
+        @update:sort="sortOption = $event"
+        @update:query="query = $event"
+        @update:type-filter="typeFilter = $event"
+        @update:rating-filter="ratingFilter = $event"
+      />
+
       <section
         v-else-if="isHome"
-        class="border-t border-neutral-300 dark:border-neutral-700"
         aria-label="Library sections"
       >
+        <ListControls
+          mode="items"
+          :sort="sortOption"
+          :query="query"
+          :type="typeFilter"
+          :content-rating="ratingFilter"
+          :content-ratings="contentRatings"
+          :content-rating-error="contentRatingError"
+          @update:sort="sortOption = $event"
+          @update:query="query = $event"
+          @update:type="typeFilter = $event"
+          @update:content-rating="ratingFilter = $event"
+        />
+        <div class="border-t border-neutral-300 dark:border-neutral-700">
         <a
           v-for="entry in sections"
           :key="entry.key"
@@ -572,19 +667,36 @@ onUnmounted(() => {
           >
           <ChevronRight class="ml-auto" :size="16" aria-hidden="true" />
         </a>
+        </div>
       </section>
 
       <section
         v-else-if="selectedTitle && selectedItem"
-        class="grid grid-cols-[minmax(110px,180px)_1fr] items-start gap-8 max-[480px]:grid-cols-1 max-[480px]:gap-[22px]"
+        class="space-y-5"
       >
-        <img
-          v-if="selectedItem.poster"
-          class="h-auto w-full max-[480px]:w-[min(45vw,160px)]"
-          :src="selectedItem.poster"
-          :alt="`${selectedItem.title} poster`"
+        <ListControls
+          mode="items"
+          :sort="sortOption"
+          :query="query"
+          :type="typeFilter"
+          :content-rating="ratingFilter"
+          :content-ratings="contentRatings"
+          :content-rating-error="contentRatingError"
+          @update:sort="sortOption = $event"
+          @update:query="query = $event"
+          @update:type="typeFilter = $event"
+          @update:content-rating="ratingFilter = $event"
         />
-        <dl class="m-0 grid gap-0">
+        <div
+          class="grid grid-cols-[minmax(110px,180px)_1fr] items-start gap-8 max-[480px]:grid-cols-1 max-[480px]:gap-[22px]"
+        >
+          <img
+            v-if="selectedItem.poster"
+            class="h-auto w-full max-[480px]:w-[min(45vw,160px)]"
+            :src="selectedItem.poster"
+            :alt="`${selectedItem.title} poster`"
+          />
+          <dl class="m-0 grid gap-0">
           <div
             class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
           >
@@ -664,7 +776,8 @@ onUnmounted(() => {
               </dd>
             </div>
           </template>
-        </dl>
+          </dl>
+        </div>
       </section>
 
       <section
@@ -689,12 +802,14 @@ onUnmounted(() => {
             <h2 class="text-3xl font-medium">{{ entryName(selectedEntry) }}</h2>
             <p class="mb-5 mt-2 text-xl text-neutral-700 dark:text-neutral-300">
               {{
-                (query.trim() ? pagination?.total : selectedEntry.item_count) ??
+                (hasItemFilters
+                  ? pagination?.total
+                  : selectedEntry.item_count) ??
                   pagination?.total ??
                   items.length
               }}
               {{
-                ((query.trim()
+                ((hasItemFilters
                   ? pagination?.total
                   : selectedEntry.item_count) ??
                   pagination?.total ??
@@ -711,11 +826,21 @@ onUnmounted(() => {
           :items="items"
           :total="pagination?.total ?? items.length"
           :format-type="formatType"
+          :query="query"
+          :sort="sortOption"
+          :type-filter="typeFilter"
+          :rating-filter="ratingFilter"
+          :content-ratings="contentRatings"
+          :content-rating-error="contentRatingError"
           person-mode
           :loading-more="loadingMore"
           :searching="searching"
           @navigate="navigate"
           @load-more="loadMore"
+          @update:sort="sortOption = $event"
+          @update:query="query = $event"
+          @update:type-filter="typeFilter = $event"
+          @update:rating-filter="ratingFilter = $event"
         />
       </section>
 
@@ -725,10 +850,20 @@ onUnmounted(() => {
         :items="items"
         :total="pagination?.total ?? items.length"
         :format-type="formatType"
+        :query="query"
+        :sort="sortOption"
+        :type-filter="typeFilter"
+        :rating-filter="ratingFilter"
+        :content-ratings="contentRatings"
+        :content-rating-error="contentRatingError"
         :loading-more="loadingMore"
         :searching="searching"
         @navigate="navigate"
         @load-more="loadMore"
+        @update:sort="sortOption = $event"
+        @update:query="query = $event"
+        @update:type-filter="typeFilter = $event"
+        @update:rating-filter="ratingFilter = $event"
       />
 
       <ListResults
@@ -736,42 +871,61 @@ onUnmounted(() => {
         :items="items"
         :total="pagination?.total ?? items.length"
         :format-type="formatType"
+        :query="query"
+        :sort="sortOption"
+        :type-filter="typeFilter"
+        :rating-filter="ratingFilter"
+        :content-ratings="contentRatings"
+        :content-rating-error="contentRatingError"
         :loading-more="loadingMore"
         :searching="searching"
         @navigate="navigate"
         @load-more="loadMore"
+        @update:sort="sortOption = $event"
+        @update:query="query = $event"
+        @update:type-filter="typeFilter = $event"
+        @update:rating-filter="ratingFilter = $event"
       />
 
-      <section
-        v-else-if="section"
-        class="border-t border-neutral-300 dark:border-neutral-700"
-        :aria-label="section.label"
-      >
-        <a
-          v-for="entry in entries"
-          :key="entry.id"
-          class="grid min-h-[53px] grid-cols-[1fr_1fr_24px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
-          :href="resourceRoute(section.key, entry)"
-          @click="navigate($event, resourceRoute(section.key, entry))"
-        >
-          <span class="text-sm font-medium">{{ entryName(entry) }}</span>
-          <span class="text-xs text-neutral-600 dark:text-neutral-400">{{
-            entry.type ?? ""
-          }}</span>
-          <ChevronRight class="ml-auto" :size="16" aria-hidden="true" />
-        </a>
-        <p
-          v-if="!entries.length"
-          class="px-1 py-[18px] text-xs text-neutral-600 dark:text-neutral-400"
-        >
-          No categories found.
-        </p>
-        <LoadMoreButton
-          v-if="pagination && entries.length < pagination.total"
-          :loading="loadingMore"
-          :disabled="searching"
-          @click="loadMore"
+      <section v-else-if="section" :aria-label="section.label">
+        <ListControls
+          mode="entries"
+          :sort="entrySortOption"
+          :query="query"
+          type=""
+          content-rating=""
+          :content-ratings="[]"
+          content-rating-error=""
+          @update:sort="entrySortOption = $event"
+          @update:query="query = $event"
         />
+        <div class="border-t border-neutral-300 dark:border-neutral-700">
+          <a
+            v-for="entry in entries"
+            :key="entry.id"
+            class="grid min-h-[53px] grid-cols-[1fr_1fr_24px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
+            :href="resourceRoute(section.key, entry)"
+            @click="navigate($event, resourceRoute(section.key, entry))"
+          >
+            <span class="text-sm font-medium">{{ entryName(entry) }}</span>
+            <span class="text-xs text-neutral-600 dark:text-neutral-400">{{
+              entry.type ?? ""
+            }}</span>
+            <ChevronRight class="ml-auto" :size="16" aria-hidden="true" />
+          </a>
+          <p
+            v-if="!entries.length"
+            class="px-1 py-[18px] text-xs text-neutral-600 dark:text-neutral-400"
+          >
+            No categories found.
+          </p>
+          <LoadMoreButton
+            v-if="pagination && entries.length < pagination.total"
+            :loading="loadingMore"
+            :disabled="searching"
+            @click="loadMore"
+          />
+        </div>
       </section>
     </main>
   </div>

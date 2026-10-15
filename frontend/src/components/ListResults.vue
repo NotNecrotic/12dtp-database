@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ListControls from "@/components/ListControls.vue";
 import LoadMoreButton from "@/components/LoadMoreButton.vue";
 
 interface ListResult {
@@ -13,6 +14,12 @@ defineProps<{
   items: ListResult[];
   total: number;
   formatType: (type: string) => string;
+  query: string;
+  sort: string;
+  typeFilter: string;
+  ratingFilter: string;
+  contentRatings: string[];
+  contentRatingError: string;
   label?: string;
   personMode?: boolean;
   loadingMore: boolean;
@@ -22,6 +29,10 @@ defineProps<{
 const emit = defineEmits<{
   navigate: [event: MouseEvent, destination: string];
   loadMore: [];
+  "update:sort": [value: string];
+  "update:query": [value: string];
+  "update:typeFilter": [value: string];
+  "update:ratingFilter": [value: string];
 }>();
 
 function titleRoute(id: number) {
@@ -34,6 +45,19 @@ function titleRoute(id: number) {
     class="border-t border-neutral-300 dark:border-neutral-700"
     :aria-label="label ?? (personMode ? 'Titles in person profile' : 'Titles')"
   >
+    <ListControls
+      mode="items"
+      :sort="sort"
+      :query="query"
+      :type="typeFilter"
+      :content-rating="ratingFilter"
+      :content-ratings="contentRatings"
+      :content-rating-error="contentRatingError"
+      @update:sort="emit('update:sort', $event)"
+      @update:query="emit('update:query', $event)"
+      @update:type="emit('update:typeFilter', $event)"
+      @update:content-rating="emit('update:ratingFilter', $event)"
+    />
     <p
       v-if="!personMode"
       class="mb-0 px-1 pb-3 text-xs text-neutral-600 dark:text-neutral-400"
