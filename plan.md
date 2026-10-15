@@ -16,5 +16,6 @@
   - [x] Basic pages + navigation
   - [x] Load API data into pages
   - [x] styled pages using tailwind
-  - [ ] user age grouping
+  - [x] user age grouping
   - [x] sort & filter items - api calling
+  - [ ] rework home page to have big section buttons for navigation

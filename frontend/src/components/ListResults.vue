@@ -61,12 +61,6 @@ function titleRoute(id: number) {
       @update:type="emit('update:typeFilter', $event)"
       @update:content-rating="emit('update:ratingFilter', $event)"
     />
-    <p
-      v-if="!personMode"
-      class="mb-0 px-1 pb-3 text-xs text-neutral-600 dark:text-neutral-400"
-    >
-      {{ total }} titles
-    </p>
     <a
       v-for="item in items"
       :key="item.id"

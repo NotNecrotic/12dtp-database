@@ -347,7 +347,7 @@ async function searchCurrentPage(term: string, version: number) {
   try {
     if (
       routeParts.length === 0 ||
-      (currentSection?.key === "titles" && routeParts.length > 1)
+      currentSection?.key === "titles"
     ) {
       const result = await getPage("/items", 0, term, true);
       if (version !== requestVersion) return;
