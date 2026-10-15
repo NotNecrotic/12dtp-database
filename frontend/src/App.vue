@@ -657,7 +657,7 @@ onUnmounted(() => {
       </p>
 
       <ListResults
-        v-else-if="hasItemFilters && (isHome || selectedTitle)"
+        v-else-if="hasItemFilters && isHome"
         :items="items"
         :age="viewerAge ?? 0"
         :total="pagination?.total ?? items.length"
@@ -711,19 +711,6 @@ onUnmounted(() => {
       </section>
 
       <section v-else-if="selectedTitle && selectedItem" class="space-y-5">
-        <ListControls
-          mode="items"
-          :sort="sortOption"
-          :query="query"
-          :type="typeFilter"
-          :content-rating="ratingFilter"
-          :content-ratings="contentRatings"
-          :content-rating-error="contentRatingError"
-          @update:sort="sortOption = $event"
-          @update:query="query = $event"
-          @update:type="typeFilter = $event"
-          @update:content-rating="ratingFilter = $event"
-        />
         <div
           class="grid grid-cols-[minmax(110px,180px)_1fr] items-start gap-8 max-[480px]:grid-cols-1 max-[480px]:gap-[22px]"
         >
