@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ChevronRight, Home, Moon, Sun } from "@lucide/vue";
+import LoadMoreButton from "@/components/LoadMoreButton.vue";
+import ListResults from "@/components/ListResults.vue";
 
 type SectionKey =
   | "titles"
@@ -704,136 +706,41 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div class="border-t border-neutral-300 pt-5 dark:border-neutral-700">
-          <a
-            v-for="item in items"
-            :key="item.id"
-            class="grid min-h-[68px] grid-cols-[1fr_70px_90px] items-center gap-4 border-b border-neutral-300 px-1 py-3 no-underline hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
-            :href="routeFor('titles', item.id)"
-            @click="navigate($event, routeFor('titles', item.id))"
-          >
-            <span class="flex flex-col gap-1">
-              <span class="text-base font-medium">{{ item.title }}</span>
-              <span
-                v-if="item.character"
-                class="text-sm text-neutral-600 dark:text-neutral-400"
-              >
-                As {{ item.character }}
-              </span>
-            </span>
-            <span
-              class="text-right text-xs text-neutral-600 dark:text-neutral-400"
-            >
-              {{ item.year ?? "" }}
-            </span>
-            <span
-              class="text-right text-xs text-neutral-600 dark:text-neutral-400"
-            >
-              {{ formatType(item.type) }}
-            </span>
-          </a>
-          <p
-            v-if="!items.length"
-            class="px-1 py-[18px] text-xs text-neutral-600 dark:text-neutral-400"
-          >
-            No titles found.
-          </p>
-          <button
-            v-if="pagination && items.length < pagination.total"
-            class="mt-[18px] border border-neutral-500 bg-white px-3 py-[9px] text-xs hover:bg-neutral-100 disabled:cursor-wait disabled:text-neutral-500 dark:border-neutral-600 dark:bg-neutral-950 dark:hover:bg-neutral-900 dark:disabled:text-neutral-500"
-            :disabled="loadingMore || searching"
-            @click="loadMore"
-          >
-            {{ loadingMore ? "Loading…" : "Load more" }}
-          </button>
-        </div>
+        <ListResults
+          class="pt-5"
+          :items="items"
+          :total="pagination?.total ?? items.length"
+          :format-type="formatType"
+          person-mode
+          :loading-more="loadingMore"
+          :searching="searching"
+          @navigate="navigate"
+          @load-more="loadMore"
+        />
       </section>
 
-      <section
+      <ListResults
         v-else-if="isDetail && selectedEntry"
-        class="border-t border-neutral-300 dark:border-neutral-700"
-        aria-label="Titles in category"
-      >
-        <p
-          class="mb-0 px-1 pb-3 text-xs text-neutral-600 dark:text-neutral-400"
-        >
-          {{ pagination?.total ?? items.length }} titles
-        </p>
-        <a
-          v-for="item in items"
-          :key="item.id"
-          class="grid min-h-[53px] grid-cols-[1fr_70px_90px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
-          :href="routeFor('titles', item.id)"
-          @click="navigate($event, routeFor('titles', item.id))"
-        >
-          <span class="text-sm font-medium">{{ item.title }}</span>
-          <span
-            class="text-right text-xs text-neutral-600 dark:text-neutral-400"
-            >{{ item.year ?? "" }}</span
-          >
-          <span
-            class="text-right text-xs text-neutral-600 dark:text-neutral-400"
-            >{{ formatType(item.type) }}</span
-          >
-        </a>
-        <p
-          v-if="!items.length"
-          class="px-1 py-[18px] text-xs text-neutral-600 dark:text-neutral-400"
-        >
-          No titles found.
-        </p>
-        <button
-          v-if="pagination && items.length < pagination.total"
-          class="mt-[18px] border border-neutral-500 bg-white px-3 py-[9px] text-xs hover:bg-neutral-100 disabled:cursor-wait disabled:text-neutral-500 dark:border-neutral-600 dark:bg-neutral-950 dark:hover:bg-neutral-900 dark:disabled:text-neutral-500"
-          :disabled="loadingMore || searching"
-          @click="loadMore"
-        >
-          {{ loadingMore ? "Loading…" : "Load more" }}
-        </button>
-      </section>
+        label="Titles in category"
+        :items="items"
+        :total="pagination?.total ?? items.length"
+        :format-type="formatType"
+        :loading-more="loadingMore"
+        :searching="searching"
+        @navigate="navigate"
+        @load-more="loadMore"
+      />
 
-      <section
+      <ListResults
         v-else-if="section?.key === 'titles'"
-        class="border-t border-neutral-300 dark:border-neutral-700"
-        aria-label="Titles"
-      >
-        <p
-          class="mb-0 px-1 pb-3 text-xs text-neutral-600 dark:text-neutral-400"
-        >
-          {{ pagination?.total ?? items.length }} titles
-        </p>
-        <a
-          v-for="item in items"
-          :key="item.id"
-          class="grid min-h-[53px] grid-cols-[1fr_70px_90px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
-          :href="routeFor('titles', item.id)"
-          @click="navigate($event, routeFor('titles', item.id))"
-        >
-          <span class="text-sm font-medium">{{ item.title }}</span>
-          <span
-            class="text-right text-xs text-neutral-600 dark:text-neutral-400"
-            >{{ item.year ?? "" }}</span
-          >
-          <span
-            class="text-right text-xs text-neutral-600 dark:text-neutral-400"
-            >{{ formatType(item.type) }}</span
-          >
-        </a>
-        <p
-          v-if="!items.length"
-          class="px-1 py-[18px] text-xs text-neutral-600 dark:text-neutral-400"
-        >
-          No titles found.
-        </p>
-        <button
-          v-if="pagination && items.length < pagination.total"
-          class="mt-[18px] border border-neutral-500 bg-white px-3 py-[9px] text-xs hover:bg-neutral-100 disabled:cursor-wait disabled:text-neutral-500 dark:border-neutral-600 dark:bg-neutral-950 dark:hover:bg-neutral-900 dark:disabled:text-neutral-500"
-          :disabled="loadingMore || searching"
-          @click="loadMore"
-        >
-          {{ loadingMore ? "Loading…" : "Load more" }}
-        </button>
-      </section>
+        :items="items"
+        :total="pagination?.total ?? items.length"
+        :format-type="formatType"
+        :loading-more="loadingMore"
+        :searching="searching"
+        @navigate="navigate"
+        @load-more="loadMore"
+      />
 
       <section
         v-else-if="section"
@@ -859,14 +766,12 @@ onUnmounted(() => {
         >
           No categories found.
         </p>
-        <button
+        <LoadMoreButton
           v-if="pagination && entries.length < pagination.total"
-          class="mt-[18px] border border-neutral-500 bg-white px-3 py-[9px] text-xs hover:bg-neutral-100 disabled:cursor-wait disabled:text-neutral-500 dark:border-neutral-600 dark:bg-neutral-950 dark:hover:bg-neutral-900 dark:disabled:text-neutral-500"
-          :disabled="loadingMore || searching"
+          :loading="loadingMore"
+          :disabled="searching"
           @click="loadMore"
-        >
-          {{ loadingMore ? "Loading…" : "Load more" }}
-        </button>
+        />
       </section>
     </main>
   </div>
