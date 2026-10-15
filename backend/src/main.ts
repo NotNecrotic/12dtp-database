@@ -16,6 +16,15 @@ const API_PREFIX = "/api/v1";
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
 
+function hideUnratedContentRating<T extends { content_rating?: unknown }>(
+  item: T,
+): T {
+  return typeof item.content_rating === "string" &&
+    item.content_rating.trim().toLowerCase() === "not rated"
+    ? { ...item, content_rating: null }
+    : item;
+}
+
 // Route descriptions returned by the API index endpoint.
 const routes = [
   {
@@ -309,7 +318,7 @@ function listItems(
     .prepare(`SELECT COUNT(*) AS total FROM items i ${filteredWhere}`)
     .get(values) as { total: number };
   // Include artwork when listing items so clients can render results directly.
-  const data = db
+  const rows = db
     .prepare(
       `
       SELECT i.*, a.poster, a.background
@@ -329,7 +338,8 @@ function listItems(
       ...values,
       ...(personId === undefined ? {} : { person_id: personId }),
       ...page,
-    });
+    }) as Record<string, unknown>[];
+  const data = rows.map((item) => hideUnratedContentRating(item));
 
   return {
     data,
@@ -357,6 +367,7 @@ function getItem(id: number): unknown | undefined {
 
   return {
     ...item,
+    ...hideUnratedContentRating(item),
     collections: db
       .prepare(
         `
@@ -474,7 +485,9 @@ function handleRequest(
           `(
             SELECT content_rating AS id, content_rating AS name, COUNT(*) AS item_count
             FROM items
-            WHERE content_rating IS NOT NULL AND content_rating != ''
+            WHERE content_rating IS NOT NULL
+              AND content_rating != ''
+              AND LOWER(TRIM(content_rating)) != 'not rated'
             GROUP BY content_rating
           ) AS ratings`,
           ["name"],
@@ -494,7 +507,9 @@ function handleRequest(
             `
             SELECT content_rating AS id, content_rating AS name, COUNT(*) AS item_count
             FROM items
-            WHERE content_rating IS NOT NULL AND content_rating != ''
+            WHERE content_rating IS NOT NULL
+              AND content_rating != ''
+              AND LOWER(TRIM(content_rating)) != 'not rated'
             GROUP BY content_rating
             ORDER BY content_rating COLLATE NOCASE
           `,
@@ -514,7 +529,12 @@ function handleRequest(
       }
 
       const exists = db
-        .prepare("SELECT 1 FROM items WHERE content_rating = @rating LIMIT 1")
+        .prepare(
+          `SELECT 1 FROM items
+           WHERE content_rating = @rating
+             AND LOWER(TRIM(content_rating)) != 'not rated'
+           LIMIT 1`,
+        )
         .get({ rating });
 
       if (!exists) {
@@ -523,7 +543,7 @@ function handleRequest(
       }
 
       const result = listItems(
-        "WHERE i.content_rating = @rating",
+        "WHERE i.content_rating = @rating AND LOWER(TRIM(i.content_rating)) != 'not rated'",
         { rating },
         url,
       );

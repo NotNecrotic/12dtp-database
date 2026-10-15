@@ -41,6 +41,10 @@ const emit = defineEmits<{
 function titleRoute(id: number) {
   return `/titles/${encodeURIComponent(String(id))}`;
 }
+
+function isRated(rating: string | null | undefined): rating is string {
+  return Boolean(rating?.trim() && rating.trim().toLowerCase() !== "not rated");
+}
 </script>
 
 <template>
@@ -76,7 +80,7 @@ function titleRoute(id: number) {
         <span class="flex flex-wrap items-center gap-2 text-base font-medium">
           {{ item.title }}
           <span
-            v-if="item.content_rating"
+            v-if="isRated(item.content_rating)"
             class="inline-flex items-center gap-1 text-xs font-normal text-neutral-600 dark:text-neutral-400"
           >
             {{ item.content_rating }}
@@ -96,7 +100,7 @@ function titleRoute(id: number) {
       >
         {{ item.title }}
         <span
-          v-if="item.content_rating"
+          v-if="isRated(item.content_rating)"
           class="inline-flex items-center gap-1 text-xs font-normal text-neutral-600 dark:text-neutral-400"
         >
           {{ item.content_rating }}

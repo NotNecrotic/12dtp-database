@@ -487,6 +487,10 @@ function entryName(entry: Entry) {
   return entry.name ?? entry.title ?? "";
 }
 
+function isRated(value: string | null | undefined): value is string {
+  return Boolean(value?.trim() && value.trim().toLowerCase() !== "not rated");
+}
+
 // Present backend item type values in user-facing form.
 function formatType(type: string) {
   return type === "show" ? "Series" : type === "movie" ? "Movie" : type;
@@ -727,7 +731,7 @@ onUnmounted(() => {
               <dd class="m-0">{{ selectedItem.year }}</dd>
             </div>
             <div
-              v-if="selectedItem.content_rating"
+              v-if="isRated(selectedItem.content_rating)"
               class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
             >
               <dt class="text-neutral-600 dark:text-neutral-400">
@@ -936,7 +940,10 @@ onUnmounted(() => {
             <span class="flex items-center gap-2 text-sm font-medium">
               {{ entryName(entry) }}
               <AgeRatingIndicator
-                v-if="section.key === 'content-ratings'"
+                v-if="
+                  section.key === 'content-ratings' &&
+                  isRated(entryName(entry))
+                "
                 :rating="entryName(entry)"
                 :age="viewerAge ?? 0"
               />
