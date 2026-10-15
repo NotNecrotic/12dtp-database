@@ -13,8 +13,7 @@ type SectionKey =
   | "people"
   | "content-ratings"
   | "countries"
-  | "collections"
-  | "libraries";
+  | "collections";
 
 interface Section {
   key: SectionKey;
@@ -45,7 +44,6 @@ interface Item {
   episode_count?: number | null;
   poster?: string | null;
   character?: string | null;
-  library_id?: number;
   collections?: Entry[];
   genres?: Entry[];
   countries?: Entry[];
@@ -93,12 +91,6 @@ const sections: Section[] = [
     label: "Collections",
     singular: "Collection",
     description: "Browse collections.",
-  },
-  {
-    key: "libraries",
-    label: "Libraries",
-    singular: "Library",
-    description: "Browse media libraries.",
   },
 ];
 

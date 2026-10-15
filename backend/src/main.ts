@@ -30,21 +30,6 @@ const routes = [
   },
   {
     method: "GET",
-    path: `${API_PREFIX}/libraries`,
-    description: "Search and list libraries, optionally paginated.",
-  },
-  {
-    method: "GET",
-    path: `${API_PREFIX}/libraries/:id`,
-    description: "Get a library.",
-  },
-  {
-    method: "GET",
-    path: `${API_PREFIX}/libraries/:id/items`,
-    description: "Search and list items in a library, optionally paginated.",
-  },
-  {
-    method: "GET",
     path: `${API_PREFIX}/items`,
     description: "Search and list items, optionally paginated.",
   },
@@ -455,64 +440,6 @@ function handleRequest(
   }
 
   const [, , resource, idText, action] = parts;
-
-  if (resource === "libraries") {
-    if (!idText) {
-      if (hasListParameters(url)) {
-        const result = listRows(
-          url,
-          "id, title, type",
-          "libraries",
-          ["title", "type"],
-          "",
-          {},
-          "title",
-        );
-        sendJson(
-          response,
-          result ? 200 : 400,
-          result ?? { error: "Invalid pagination or search parameters" },
-        );
-        return;
-      }
-      sendJson(
-        response,
-        200,
-        db
-          .prepare("SELECT * FROM libraries ORDER BY title COLLATE NOCASE")
-          .all(),
-      );
-      return;
-    }
-
-    const id = parseId(idText);
-    if (id === null) {
-      sendJson(response, 400, { error: "Invalid library ID" });
-      return;
-    }
-
-    if (action === "items" && parts.length === 5) {
-      const result = listItems("WHERE i.library_id = @id", { id }, url);
-      sendJson(
-        response,
-        result ? 200 : 400,
-        result ?? { error: "Invalid pagination parameters" },
-      );
-      return;
-    }
-
-    if (!action && parts.length === 4) {
-      const library = db
-        .prepare("SELECT * FROM libraries WHERE id = @id")
-        .get({ id });
-      sendJson(
-        response,
-        library ? 200 : 404,
-        library ?? { error: "Library not found" },
-      );
-      return;
-    }
-  }
 
   if (resource === "items") {
     if (!idText && parts.length === 3) {
