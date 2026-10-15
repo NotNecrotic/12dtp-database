@@ -31,7 +31,7 @@ const routes = [
   {
     method: "GET",
     path: `${API_PREFIX}/libraries`,
-    description: "List libraries.",
+    description: "Search and list libraries, optionally paginated.",
   },
   {
     method: "GET",
@@ -41,12 +41,12 @@ const routes = [
   {
     method: "GET",
     path: `${API_PREFIX}/libraries/:id/items`,
-    description: "List items in a library.",
+    description: "Search and list items in a library, optionally paginated.",
   },
   {
     method: "GET",
     path: `${API_PREFIX}/items`,
-    description: "List items, optionally paginated.",
+    description: "Search and list items, optionally paginated.",
   },
   {
     method: "GET",
@@ -56,48 +56,52 @@ const routes = [
   {
     method: "GET",
     path: `${API_PREFIX}/collections`,
-    description: "List collections.",
+    description: "Search and list collections, optionally paginated.",
   },
   {
     method: "GET",
     path: `${API_PREFIX}/collections/:id/items`,
-    description: "List items in a collection.",
+    description: "Search and list items in a collection, optionally paginated.",
   },
-  { method: "GET", path: `${API_PREFIX}/genres`, description: "List genres." },
+  {
+    method: "GET",
+    path: `${API_PREFIX}/genres`,
+    description: "Search and list genres, optionally paginated.",
+  },
   {
     method: "GET",
     path: `${API_PREFIX}/genres/:id/items`,
-    description: "List items with a genre.",
+    description: "Search and list items with a genre, optionally paginated.",
   },
   {
     method: "GET",
     path: `${API_PREFIX}/countries`,
-    description: "List countries.",
+    description: "Search and list countries, optionally paginated.",
   },
   {
     method: "GET",
     path: `${API_PREFIX}/countries/:id/items`,
-    description: "List items from a country.",
+    description: "Search and list items from a country, optionally paginated.",
   },
   {
     method: "GET",
     path: `${API_PREFIX}/people`,
-    description: "List actors and other credited people.",
+    description: "Search and list people, optionally paginated.",
   },
   {
     method: "GET",
     path: `${API_PREFIX}/people/:id/items`,
-    description: "List items associated with a person.",
+    description: "Search and list items associated with a person, optionally paginated.",
   },
   {
     method: "GET",
     path: `${API_PREFIX}/content-ratings`,
-    description: "List content ratings.",
+    description: "Search and list content ratings, optionally paginated.",
   },
   {
     method: "GET",
     path: `${API_PREFIX}/content-ratings/:rating/items`,
-    description: "List items with a content rating.",
+    description: "Search and list items with a content rating, optionally paginated.",
   },
 ] as const;
 
@@ -165,6 +169,68 @@ function pagination(url: URL): { limit: number; offset: number } | null {
   return { limit, offset };
 }
 
+function searchTerm(url: URL): string {
+  return (url.searchParams.get("q") ?? "").trim();
+}
+
+function escapedSearchPattern(term: string): string {
+  return `%${term.replace(/[\\%_]/g, "\\$&")}%`;
+}
+
+function hasListParameters(url: URL): boolean {
+  return (
+    url.searchParams.has("limit") ||
+    url.searchParams.has("offset") ||
+    url.searchParams.has("q")
+  );
+}
+
+// Return a named-record page filtered against the full database result set.
+function listRows(
+  url: URL,
+  columns: string,
+  from: string,
+  searchFields: string[],
+  baseWhere = "",
+  parameters: Record<string, number | string> = {},
+  orderBy = "name",
+): {
+  data: unknown[];
+  pagination: { limit: number; offset: number; total: number };
+} | null {
+  const page = pagination(url);
+  const term = searchTerm(url);
+  if (!page || term.length > 200) return null;
+
+  const filters = [baseWhere];
+  const values: Record<string, number | string> = { ...parameters };
+  if (term) {
+    filters.push(
+      `(${searchFields.map((field) => `${field} LIKE @search ESCAPE '\\'`).join(" OR ")})`,
+    );
+    values.search = escapedSearchPattern(term);
+  }
+  const conditions = filters.filter(Boolean);
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  const count = db
+    .prepare(`SELECT COUNT(*) AS total FROM ${from} ${where}`)
+    .get(values) as { total: number };
+  const data = db
+    .prepare(
+      `
+      SELECT ${columns}
+      FROM ${from}
+      ${where}
+      ORDER BY ${orderBy} COLLATE NOCASE, id
+      LIMIT @limit OFFSET @offset
+    `,
+    )
+    .all({ ...values, ...page });
+
+  return { data, pagination: { ...page, total: count.total } };
+}
+
 // Return a page of items and its total count
 function listItems(
   where: string,
@@ -178,14 +244,36 @@ function listItems(
   // Validate pagination before using it in the SQL query.
   const page = pagination(url);
 
-  if (!page) {
+  const term = searchTerm(url);
+  if (!page || term.length > 200) {
     return null;
   }
+  const searchWhere = term
+    ? `${where ? " AND" : " WHERE"} (
+        i.title LIKE @search ESCAPE '\\'
+        OR CAST(i.year AS TEXT) LIKE @search ESCAPE '\\'
+        OR i.type LIKE @search ESCAPE '\\'
+        OR i.content_rating LIKE @search ESCAPE '\\'
+        ${personId === undefined ? "" : `
+          OR EXISTS (
+            SELECT 1 FROM item_people ip
+            WHERE ip.item_id = i.id
+              AND ip.person_id = @person_id
+              AND ip.character LIKE @search ESCAPE '\\'
+          )`}
+      )`
+    : "";
+  const filteredWhere = `${where}${searchWhere}`;
+  const values = {
+    ...parameters,
+    ...(term ? { search: escapedSearchPattern(term) } : {}),
+    ...(term && personId !== undefined ? { person_id: personId } : {}),
+  };
 
   // Return the total separately so clients can calculate page counts.
   const count = db
-    .prepare(`SELECT COUNT(*) AS total FROM items i ${where}`)
-    .get(parameters) as { total: number };
+    .prepare(`SELECT COUNT(*) AS total FROM items i ${filteredWhere}`)
+    .get(values) as { total: number };
   // Include artwork when listing items so clients can render results directly.
   const data = db
     .prepare(
@@ -198,13 +286,13 @@ function listItems(
            LIMIT 1) AS character`}
       FROM items i
       LEFT JOIN artwork a ON a.item_id = i.id
-      ${where}
+      ${filteredWhere}
       ORDER BY i.title COLLATE NOCASE, i.id
       LIMIT @limit OFFSET @offset
     `,
     )
     .all({
-      ...parameters,
+      ...values,
       ...(personId === undefined ? {} : { person_id: personId }),
       ...page,
     });
@@ -321,6 +409,23 @@ function handleRequest(
 
   if (resource === "libraries") {
     if (!idText) {
+      if (hasListParameters(url)) {
+        const result = listRows(
+          url,
+          "id, title, type",
+          "libraries",
+          ["title", "type"],
+          "",
+          {},
+          "title",
+        );
+        sendJson(
+          response,
+          result ? 200 : 400,
+          result ?? { error: "Invalid pagination or search parameters" },
+        );
+        return;
+      }
       sendJson(
         response,
         200,
@@ -386,6 +491,25 @@ function handleRequest(
 
   if (resource === "content-ratings") {
     if (!idText && parts.length === 3) {
+      if (hasListParameters(url)) {
+        const result = listRows(
+          url,
+          "id, name, item_count",
+          `(
+            SELECT content_rating AS id, content_rating AS name, COUNT(*) AS item_count
+            FROM items
+            WHERE content_rating IS NOT NULL AND content_rating != ''
+            GROUP BY content_rating
+          ) AS ratings`,
+          ["name"],
+        );
+        sendJson(
+          response,
+          result ? 200 : 400,
+          result ?? { error: "Invalid pagination or search parameters" },
+        );
+        return;
+      }
       sendJson(
         response,
         200,
@@ -442,38 +566,22 @@ function handleRequest(
     : undefined;
   if (relation) {
     if (!idText && parts.length === 3) {
+      if (hasListParameters(url)) {
+        const result = listRows(
+          url,
+          resource === "people" ? "id, name, profile_picture" : "*",
+          relation.table,
+          ["name"],
+        );
+        sendJson(
+          response,
+          result ? 200 : 400,
+          result ?? { error: "Invalid pagination or search parameters" },
+        );
+        return;
+      }
+
       if (resource === "people") {
-        if (
-          url.searchParams.has("limit") ||
-          url.searchParams.has("offset")
-        ) {
-          const page = pagination(url);
-          if (!page) {
-            sendJson(response, 400, { error: "Invalid pagination parameters" });
-            return;
-          }
-
-          const count = db
-            .prepare("SELECT COUNT(*) AS total FROM people")
-            .get() as { total: number };
-          const data = db
-            .prepare(
-              `
-              SELECT id, name, profile_picture
-              FROM people
-              ORDER BY name COLLATE NOCASE
-              LIMIT @limit OFFSET @offset
-            `,
-            )
-            .all(page);
-
-          sendJson(response, 200, {
-            data,
-            pagination: { ...page, total: count.total },
-          });
-          return;
-        }
-
         sendJson(
           response,
           200,
@@ -536,7 +644,10 @@ function handleRequest(
         )
         .all({ id }) as { role: string }[];
 
-      sendJson(response, 200, { ...person, roles: roles.map(({ role }) => role) });
+      sendJson(response, 200, {
+        ...person,
+        roles: roles.map(({ role }) => role),
+      });
       return;
     }
 
@@ -559,11 +670,16 @@ function handleRequest(
       const where = `WHERE i.id IN (
         SELECT item_id FROM ${relation.junction} WHERE ${relation.foreignKey} = @id
       )`;
-          const result = listItems(where, { id }, url, resource === "people" ? id : undefined);
+      const result = listItems(
+        where,
+        { id },
+        url,
+        resource === "people" ? id : undefined,
+      );
       sendJson(
         response,
         result ? 200 : 400,
-        result ?? { error: "Invalid pagination parameters" },
+        result ?? { error: "Invalid pagination or search parameters" },
       );
       return;
     }

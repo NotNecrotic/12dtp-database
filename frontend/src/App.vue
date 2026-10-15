@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ChevronRight, Home, Moon, Sun } from "@lucide/vue";
 
 type SectionKey =
@@ -101,16 +101,18 @@ const apiPrefix = "/api/v1";
 const path = ref(window.location.pathname);
 const query = ref("");
 const entries = ref<Entry[]>([]);
-const entriesPagination = ref<Paginated<Entry>["pagination"] | null>(null);
 const personProfile = ref<Entry | null>(null);
 const items = ref<Item[]>([]);
 const selectedItem = ref<Item | null>(null);
-const pagination = ref<Paginated<Item>["pagination"] | null>(null);
+const pagination = ref<Paginated<unknown>["pagination"] | null>(null);
 const loading = ref(false);
 const loadingMore = ref(false);
+const searching = ref(false);
 const error = ref("");
 const isDark = ref(window.localStorage.getItem("theme") === "dark");
 let requestVersion = 0;
+let searchTimer: ReturnType<typeof setTimeout> | undefined;
+let suppressQueryWatch = false;
 
 const parts = computed(() => path.value.split("/").filter(Boolean));
 const section = computed(() =>
@@ -126,24 +128,6 @@ const selectedTitle = computed(
 );
 const isHome = computed(() => parts.value.length === 0);
 const isDetail = computed(() => parts.value.length > 1);
-const visibleEntries = computed(() => {
-  const term = query.value.trim().toLocaleLowerCase();
-  return term
-    ? entries.value.filter((entry) =>
-        entryName(entry).toLocaleLowerCase().includes(term),
-      )
-    : entries.value;
-});
-const visibleItems = computed(() => {
-  const term = query.value.trim().toLocaleLowerCase();
-  return term
-    ? items.value.filter((item) =>
-        `${item.title} ${item.year ?? ""} ${item.type}`
-          .toLocaleLowerCase()
-          .includes(term),
-      )
-    : items.value;
-});
 const pageHeading = computed(() => {
   if (isHome.value) return "Media library";
   if (selectedTitle.value && selectedItem.value)
@@ -166,9 +150,14 @@ async function api<T>(endpoint: string): Promise<T> {
   return payload as T;
 }
 
-// Fetch one page of data using the backend's pagination parameters.
-function getPage(endpoint: string, offset = 0) {
-  return api<Paginated<Item>>(`${endpoint}?limit=100&offset=${offset}`);
+// Fetch a page from the full matching result set using server-side search.
+function getPage<T = Item>(endpoint: string, offset = 0, term = "") {
+  const params = new URLSearchParams({
+    limit: "100",
+    offset: String(offset),
+  });
+  if (term) params.set("q", term);
+  return api<Paginated<T>>(`${endpoint}?${params.toString()}`);
 }
 
 // Map a section key to the API route that lists its categories.
@@ -179,9 +168,12 @@ function entryEndpoint(key: SectionKey) {
 // Load the data needed for the current home, section, category, or title route.
 async function loadPage() {
   const version = ++requestVersion;
+  if (searchTimer) clearTimeout(searchTimer);
+  searching.value = false;
+  suppressQueryWatch = true;
   query.value = "";
+  suppressQueryWatch = false;
   entries.value = [];
-  entriesPagination.value = null;
   personProfile.value = null;
   items.value = [];
   selectedItem.value = null;
@@ -205,17 +197,13 @@ async function loadPage() {
         if (version !== requestVersion) return;
         items.value = result.data;
         pagination.value = result.pagination;
-      } else if (currentSection.key === "people") {
-        const result = await api<Paginated<Entry>>(
-          `${entryEndpoint(currentSection.key)}?limit=100&offset=0`,
+      } else {
+        const result = await getPage<Entry>(
+          entryEndpoint(currentSection.key),
         );
         if (version !== requestVersion) return;
         entries.value = result.data;
-        entriesPagination.value = result.pagination;
-      } else {
-        const result = await api<Entry[]>(entryEndpoint(currentSection.key));
-        if (version !== requestVersion) return;
-        entries.value = result;
+        pagination.value = result.pagination;
       }
     } else if (currentSection.key === "titles") {
       const result = await api<Item>(
@@ -266,27 +254,60 @@ async function loadPage() {
   }
 }
 
-// Append the next page of titles to the current section or category results.
-async function loadMore() {
-  if (!section.value || loadingMore.value) return;
-  if (section.value.key === "people" && entriesPagination.value) {
-    loadingMore.value = true;
-    error.value = "";
-    try {
-      const result = await api<Paginated<Entry>>(
-        `${entryEndpoint("people")}?limit=100&offset=${entries.value.length}`,
-      );
-      entries.value = [...entries.value, ...result.data];
-      entriesPagination.value = result.pagination;
-    } catch (cause) {
-      error.value =
-        cause instanceof Error ? cause.message : "Could not load more people.";
-    } finally {
-      loadingMore.value = false;
-    }
+// Replace the current page when search changes, leaving pagination to the API.
+async function searchCurrentPage(term: string, version: number) {
+  const routeParts = path.value.split("/").filter(Boolean);
+  const currentSection = sections.find(
+    (candidate) => candidate.key === routeParts[0],
+  );
+  if (!currentSection || routeParts.length === 0) {
+    searching.value = false;
     return;
   }
-  if (!pagination.value) return;
+  error.value = "";
+
+  try {
+    if (routeParts.length === 1 && currentSection.key !== "titles") {
+      const result = await getPage<Entry>(
+        entryEndpoint(currentSection.key),
+        0,
+        term,
+      );
+      if (version !== requestVersion) return;
+      entries.value = result.data;
+      pagination.value = result.pagination;
+    } else {
+      const endpoint =
+        routeParts.length === 1
+          ? "/items"
+          : `/${currentSection.key}/${encodeURIComponent(routeParts[1] ?? "")}/items`;
+      const result = await getPage(endpoint, 0, term);
+      if (version !== requestVersion) return;
+      items.value = result.data;
+      pagination.value = result.pagination;
+    }
+  } catch (cause) {
+    if (version === requestVersion) {
+      error.value =
+        cause instanceof Error
+          ? cause.message
+          : "Could not search the database.";
+    }
+  } finally {
+    if (version === requestVersion) searching.value = false;
+  }
+}
+
+// Append the next page of the current search results.
+async function loadMore() {
+  if (
+    !section.value ||
+    !pagination.value ||
+    loadingMore.value ||
+    searching.value
+  )
+    return;
+  const version = requestVersion;
   loadingMore.value = true;
   error.value = "";
   try {
@@ -295,16 +316,49 @@ async function loadMore() {
     if (routeParts.length > 1 && section.value.key !== "titles") {
       endpoint = `/${section.value.key}/${encodeURIComponent(routeParts[1] ?? "")}/items`;
     }
-    const result = await getPage(endpoint, items.value.length);
-    items.value = [...items.value, ...result.data];
-    pagination.value = result.pagination;
+    const isEntryList = routeParts.length === 1 && section.value.key !== "titles";
+    if (isEntryList) {
+      const result = await getPage<Entry>(
+        entryEndpoint(section.value.key),
+        entries.value.length,
+        query.value.trim(),
+      );
+      if (version !== requestVersion) return;
+      entries.value = [...entries.value, ...result.data];
+      pagination.value = result.pagination;
+    } else {
+      const result = await getPage<Item>(
+        endpoint,
+        items.value.length,
+        query.value.trim(),
+      );
+      if (version !== requestVersion) return;
+      items.value = [...items.value, ...result.data];
+      pagination.value = result.pagination;
+    }
   } catch (cause) {
-    error.value =
-      cause instanceof Error ? cause.message : "Could not load more titles.";
+    if (version === requestVersion) {
+      error.value =
+        cause instanceof Error ? cause.message : "Could not load more results.";
+    }
   } finally {
     loadingMore.value = false;
   }
 }
+
+watch(
+  query,
+  (term) => {
+    if (suppressQueryWatch) return;
+    if (searchTimer) clearTimeout(searchTimer);
+    const version = ++requestVersion;
+    searching.value = true;
+    searchTimer = setTimeout(() => {
+      void searchCurrentPage(term.trim(), version);
+    }, 250);
+  },
+  { flush: "sync" },
+);
 
 // Navigate client-side while preserving normal modified-link browser behavior.
 function navigate(event: MouseEvent, destination: string) {
@@ -368,7 +422,10 @@ onMounted(() => {
   window.addEventListener("popstate", syncPath);
   void loadPage();
 });
-onUnmounted(() => window.removeEventListener("popstate", syncPath));
+onUnmounted(() => {
+  window.removeEventListener("popstate", syncPath);
+  if (searchTimer) clearTimeout(searchTimer);
+});
 </script>
 
 <template>
@@ -472,6 +529,7 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
           v-model="query"
           class="h-[34px] w-[min(250px,38vw)] border border-neutral-400 bg-white px-2 text-[13px] text-neutral-950 outline-none focus:border-neutral-950 max-[760px]:w-full dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100 dark:focus:border-neutral-300"
           type="search"
+          maxlength="200"
           :placeholder="
             section?.key === 'titles' || isDetail ? 'Search titles' : 'Search'
           "
@@ -629,10 +687,14 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
             <h2 class="text-3xl font-medium">{{ entryName(selectedEntry) }}</h2>
             <p class="mb-5 mt-2 text-xl text-neutral-700 dark:text-neutral-300">
               {{
-                selectedEntry.item_count ?? pagination?.total ?? items.length
+                (query.trim() ? pagination?.total : selectedEntry.item_count) ??
+                  pagination?.total ??
+                  items.length
               }}
               {{
-                (selectedEntry.item_count ??
+                ((query.trim()
+                  ? pagination?.total
+                  : selectedEntry.item_count) ??
                   pagination?.total ??
                   items.length) === 1
                   ? "title"
@@ -644,7 +706,7 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
 
         <div class="border-t border-neutral-300 pt-5 dark:border-neutral-700">
           <a
-            v-for="item in visibleItems"
+            v-for="item in items"
             :key="item.id"
             class="grid min-h-[68px] grid-cols-[1fr_70px_90px] items-center gap-4 border-b border-neutral-300 px-1 py-3 no-underline hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
             :href="routeFor('titles', item.id)"
@@ -671,7 +733,7 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
             </span>
           </a>
           <p
-            v-if="!visibleItems.length"
+            v-if="!items.length"
             class="px-1 py-[18px] text-xs text-neutral-600 dark:text-neutral-400"
           >
             No titles found.
@@ -679,7 +741,7 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
           <button
             v-if="pagination && items.length < pagination.total"
             class="mt-[18px] border border-neutral-500 bg-white px-3 py-[9px] text-xs hover:bg-neutral-100 disabled:cursor-wait disabled:text-neutral-500 dark:border-neutral-600 dark:bg-neutral-950 dark:hover:bg-neutral-900 dark:disabled:text-neutral-500"
-            :disabled="loadingMore"
+            :disabled="loadingMore || searching"
             @click="loadMore"
           >
             {{ loadingMore ? "Loading…" : "Load more" }}
@@ -698,7 +760,7 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
           {{ pagination?.total ?? items.length }} titles
         </p>
         <a
-          v-for="item in visibleItems"
+          v-for="item in items"
           :key="item.id"
           class="grid min-h-[53px] grid-cols-[1fr_70px_90px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
           :href="routeFor('titles', item.id)"
@@ -715,7 +777,7 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
           >
         </a>
         <p
-          v-if="!visibleItems.length"
+          v-if="!items.length"
           class="px-1 py-[18px] text-xs text-neutral-600 dark:text-neutral-400"
         >
           No titles found.
@@ -723,7 +785,7 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
         <button
           v-if="pagination && items.length < pagination.total"
           class="mt-[18px] border border-neutral-500 bg-white px-3 py-[9px] text-xs hover:bg-neutral-100 disabled:cursor-wait disabled:text-neutral-500 dark:border-neutral-600 dark:bg-neutral-950 dark:hover:bg-neutral-900 dark:disabled:text-neutral-500"
-          :disabled="loadingMore"
+          :disabled="loadingMore || searching"
           @click="loadMore"
         >
           {{ loadingMore ? "Loading…" : "Load more" }}
@@ -741,7 +803,7 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
           {{ pagination?.total ?? items.length }} titles
         </p>
         <a
-          v-for="item in visibleItems"
+          v-for="item in items"
           :key="item.id"
           class="grid min-h-[53px] grid-cols-[1fr_70px_90px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
           :href="routeFor('titles', item.id)"
@@ -758,7 +820,7 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
           >
         </a>
         <p
-          v-if="!visibleItems.length"
+          v-if="!items.length"
           class="px-1 py-[18px] text-xs text-neutral-600 dark:text-neutral-400"
         >
           No titles found.
@@ -766,7 +828,7 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
         <button
           v-if="pagination && items.length < pagination.total"
           class="mt-[18px] border border-neutral-500 bg-white px-3 py-[9px] text-xs hover:bg-neutral-100 disabled:cursor-wait disabled:text-neutral-500 dark:border-neutral-600 dark:bg-neutral-950 dark:hover:bg-neutral-900 dark:disabled:text-neutral-500"
-          :disabled="loadingMore"
+          :disabled="loadingMore || searching"
           @click="loadMore"
         >
           {{ loadingMore ? "Loading…" : "Load more" }}
@@ -779,7 +841,7 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
         :aria-label="section.label"
       >
         <a
-          v-for="entry in visibleEntries"
+          v-for="entry in entries"
           :key="entry.id"
           class="grid min-h-[53px] grid-cols-[1fr_1fr_24px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
           :href="resourceRoute(section.key, entry)"
@@ -792,19 +854,15 @@ onUnmounted(() => window.removeEventListener("popstate", syncPath));
           <ChevronRight class="ml-auto" :size="16" aria-hidden="true" />
         </a>
         <p
-          v-if="!visibleEntries.length"
+          v-if="!entries.length"
           class="px-1 py-[18px] text-xs text-neutral-600 dark:text-neutral-400"
         >
           No categories found.
         </p>
         <button
-          v-if="
-            section.key === 'people' &&
-            entriesPagination &&
-            entries.length < entriesPagination.total
-          "
+          v-if="pagination && entries.length < pagination.total"
           class="mt-[18px] border border-neutral-500 bg-white px-3 py-[9px] text-xs hover:bg-neutral-100 disabled:cursor-wait disabled:text-neutral-500 dark:border-neutral-600 dark:bg-neutral-950 dark:hover:bg-neutral-900 dark:disabled:text-neutral-500"
-          :disabled="loadingMore"
+          :disabled="loadingMore || searching"
           @click="loadMore"
         >
           {{ loadingMore ? "Loading…" : "Load more" }}
