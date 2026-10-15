@@ -1,17 +1,20 @@
 <script setup lang="ts">
 import ListControls from "@/components/ListControls.vue";
 import LoadMoreButton from "@/components/LoadMoreButton.vue";
+import AgeRatingIndicator from "@/components/AgeRatingIndicator.vue";
 
 interface ListResult {
   id: number;
   title: string;
   type: string;
   year: number | null;
+  content_rating?: string | null;
   character?: string | null;
 }
 
 defineProps<{
   items: ListResult[];
+  age: number;
   total: number;
   formatType: (type: string) => string;
   query: string;
@@ -76,7 +79,16 @@ function titleRoute(id: number) {
       @click="emit('navigate', $event, titleRoute(item.id))"
     >
       <span v-if="personMode" class="flex flex-col gap-1">
-        <span class="text-base font-medium">{{ item.title }}</span>
+        <span class="flex flex-wrap items-center gap-2 text-base font-medium">
+          {{ item.title }}
+          <span
+            v-if="item.content_rating"
+            class="inline-flex items-center gap-1 text-xs font-normal text-neutral-600 dark:text-neutral-400"
+          >
+            {{ item.content_rating }}
+            <AgeRatingIndicator :rating="item.content_rating" :age="age" />
+          </span>
+        </span>
         <span
           v-if="item.character"
           class="text-sm text-neutral-600 dark:text-neutral-400"
@@ -84,7 +96,19 @@ function titleRoute(id: number) {
           As {{ item.character }}
         </span>
       </span>
-      <span v-else class="text-sm font-medium">{{ item.title }}</span>
+      <span
+        v-else
+        class="flex flex-wrap items-center gap-2 text-sm font-medium"
+      >
+        {{ item.title }}
+        <span
+          v-if="item.content_rating"
+          class="inline-flex items-center gap-1 text-xs font-normal text-neutral-600 dark:text-neutral-400"
+        >
+          {{ item.content_rating }}
+          <AgeRatingIndicator :rating="item.content_rating" :age="age" />
+        </span>
+      </span>
       <span class="text-right text-xs text-neutral-600 dark:text-neutral-400">
         {{ item.year ?? "" }}
       </span>

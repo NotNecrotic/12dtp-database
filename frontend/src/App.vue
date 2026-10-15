@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { ChevronRight, Home, Moon, Sun } from "@lucide/vue";
+import { ChevronRight, Home, Moon, Sun, Trash2 } from "@lucide/vue";
+import AgeGate from "@/components/AgeGate.vue";
+import AgeRatingIndicator from "@/components/AgeRatingIndicator.vue";
 import ListControls from "@/components/ListControls.vue";
 import LoadMoreButton from "@/components/LoadMoreButton.vue";
 import ListResults from "@/components/ListResults.vue";
@@ -102,6 +104,7 @@ const sections: Section[] = [
 
 const apiPrefix = "/api/v1";
 const path = ref(window.location.pathname);
+const viewerAge = ref<number | null>(getSavedViewerAge());
 const query = ref("");
 const sortOption = ref("title-asc");
 const entrySortOption = ref("name-asc");
@@ -123,6 +126,34 @@ let requestVersion = 0;
 let searchTimer: ReturnType<typeof setTimeout> | undefined;
 let suppressSearchWatch = false;
 
+function getSavedViewerAge(): number | null {
+  const value = window.localStorage.getItem("viewer-age");
+  if (value === null) return null;
+
+  const age = Number(value);
+  return Number.isInteger(age) && age >= 0 && age <= 120 ? age : null;
+}
+
+function saveViewerAge(age: number) {
+  window.localStorage.setItem("viewer-age", String(age));
+  viewerAge.value = age;
+  void loadPage();
+  loadContentRatings();
+}
+
+function loadContentRatings() {
+  void api<Entry[]>("/content-ratings")
+    .then((ratings) => {
+      contentRatings.value = ratings.map(entryName);
+    })
+    .catch((cause: unknown) => {
+      contentRatingError.value =
+        cause instanceof Error
+          ? `Could not load rating options: ${cause.message}`
+          : "Could not load rating options.";
+    });
+}
+
 const parts = computed(() => path.value.split("/").filter(Boolean));
 const section = computed(() =>
   sections.find((candidate) => candidate.key === parts.value[0]),
@@ -137,14 +168,13 @@ const selectedTitle = computed(
 );
 const isHome = computed(() => parts.value.length === 0);
 const isDetail = computed(() => parts.value.length > 1);
-const hasItemFilters = computed(
-  () =>
-    Boolean(
-      query.value.trim() ||
-        typeFilter.value ||
-        ratingFilter.value ||
-        sortOption.value !== "title-asc",
-    ),
+const hasItemFilters = computed(() =>
+  Boolean(
+    query.value.trim() ||
+    typeFilter.value ||
+    ratingFilter.value ||
+    sortOption.value !== "title-asc",
+  ),
 );
 const pageHeading = computed(() => {
   if (isHome.value) return "Media library";
@@ -336,8 +366,7 @@ async function searchCurrentPage(term: string, version: number) {
       pagination.value = result.pagination;
     } else {
       if (!currentSection) return;
-      const endpoint =
-        `/${currentSection.key}/${encodeURIComponent(routeParts[1] ?? "")}/items`;
+      const endpoint = `/${currentSection.key}/${encodeURIComponent(routeParts[1] ?? "")}/items`;
       const result = await getPage(endpoint, 0, term, true);
       if (version !== requestVersion) return;
       items.value = result.data;
@@ -482,19 +511,17 @@ function toggleTheme() {
   window.localStorage.setItem("theme", isDark.value ? "dark" : "light");
 }
 
+function resetViewerAge() {
+  window.localStorage.removeItem("viewer-age");
+  viewerAge.value = null;
+}
+
 onMounted(() => {
   window.addEventListener("popstate", syncPath);
-  void loadPage();
-  void api<Entry[]>("/content-ratings")
-    .then((ratings) => {
-      contentRatings.value = ratings.map(entryName);
-    })
-    .catch((cause: unknown) => {
-      contentRatingError.value =
-        cause instanceof Error
-          ? `Could not load rating options: ${cause.message}`
-          : "Could not load rating options.";
-    });
+  if (viewerAge.value !== null) {
+    void loadPage();
+    loadContentRatings();
+  }
 });
 onUnmounted(() => {
   window.removeEventListener("popstate", syncPath);
@@ -503,14 +530,20 @@ onUnmounted(() => {
 </script>
 
 <template>
+  <AgeGate
+    v-if="viewerAge === null"
+    :dark="isDark"
+    @submit-age="saveViewerAge"
+  />
   <div
+    v-else
     :class="[
       'min-h-screen bg-white text-neutral-950 dark:bg-neutral-950 dark:text-neutral-100',
       { dark: isDark },
     ]"
   >
     <header
-      class="grid min-h-[58px] grid-cols-[36px_minmax(0,1fr)_36px] items-center gap-3 border-b border-neutral-300 px-[5vw] dark:border-neutral-700"
+      class="grid min-h-[58px] grid-cols-[36px_minmax(0,1fr)_36px_36px] items-center gap-3 border-b border-neutral-300 px-[5vw] dark:border-neutral-700"
     >
       <a
         class="grid h-9 w-9 place-items-center justify-self-start text-neutral-900 hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-neutral-500 dark:text-neutral-100 dark:hover:bg-neutral-800"
@@ -549,6 +582,15 @@ onUnmounted(() => {
       >
         <Sun v-if="isDark" :size="20" :stroke-width="1.75" aria-hidden="true" />
         <Moon v-else :size="20" :stroke-width="1.75" aria-hidden="true" />
+      </button>
+      <button
+        class="grid h-9 w-9 place-items-center justify-self-end text-neutral-900 hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-neutral-500 dark:text-neutral-100 dark:hover:bg-neutral-800"
+        type="button"
+        aria-label="Clear saved age"
+        title="Clear saved age"
+        @click="resetViewerAge"
+      >
+        <Trash2 :size="20" :stroke-width="1.75" aria-hidden="true" />
       </button>
     </header>
 
@@ -617,6 +659,7 @@ onUnmounted(() => {
       <ListResults
         v-else-if="hasItemFilters && (isHome || selectedTitle)"
         :items="items"
+        :age="viewerAge ?? 0"
         :total="pagination?.total ?? items.length"
         :format-type="formatType"
         :query="query"
@@ -635,10 +678,7 @@ onUnmounted(() => {
         @update:rating-filter="ratingFilter = $event"
       />
 
-      <section
-        v-else-if="isHome"
-        aria-label="Library sections"
-      >
+      <section v-else-if="isHome" aria-label="Library sections">
         <ListControls
           mode="items"
           :sort="sortOption"
@@ -653,27 +693,24 @@ onUnmounted(() => {
           @update:content-rating="ratingFilter = $event"
         />
         <div class="border-t border-neutral-300 dark:border-neutral-700">
-        <a
-          v-for="entry in sections"
-          :key="entry.key"
-          class="grid min-h-[53px] grid-cols-[minmax(130px,1fr)_minmax(150px,2fr)_24px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100 max-[480px]:grid-cols-[1fr_24px] dark:border-neutral-700 dark:hover:bg-neutral-900"
-          :href="routeFor(entry.key)"
-          @click="navigate($event, routeFor(entry.key))"
-        >
-          <span class="text-sm font-medium">{{ entry.label }}</span>
-          <span
-            class="text-xs text-neutral-600 max-[480px]:hidden dark:text-neutral-400"
-            >{{ entry.description }}</span
+          <a
+            v-for="entry in sections"
+            :key="entry.key"
+            class="grid min-h-[53px] grid-cols-[minmax(130px,1fr)_minmax(150px,2fr)_24px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100 max-[480px]:grid-cols-[1fr_24px] dark:border-neutral-700 dark:hover:bg-neutral-900"
+            :href="routeFor(entry.key)"
+            @click="navigate($event, routeFor(entry.key))"
           >
-          <ChevronRight class="ml-auto" :size="16" aria-hidden="true" />
-        </a>
+            <span class="text-sm font-medium">{{ entry.label }}</span>
+            <span
+              class="text-xs text-neutral-600 max-[480px]:hidden dark:text-neutral-400"
+              >{{ entry.description }}</span
+            >
+            <ChevronRight class="ml-auto" :size="16" aria-hidden="true" />
+          </a>
         </div>
       </section>
 
-      <section
-        v-else-if="selectedTitle && selectedItem"
-        class="space-y-5"
-      >
+      <section v-else-if="selectedTitle && selectedItem" class="space-y-5">
         <ListControls
           mode="items"
           :sort="sortOption"
@@ -697,85 +734,92 @@ onUnmounted(() => {
             :alt="`${selectedItem.title} poster`"
           />
           <dl class="m-0 grid gap-0">
-          <div
-            class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
-          >
-            <dt class="text-neutral-600 dark:text-neutral-400">Type</dt>
-            <dd class="m-0">{{ formatType(selectedItem.type) }}</dd>
-          </div>
-          <div
-            v-if="selectedItem.year"
-            class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
-          >
-            <dt class="text-neutral-600 dark:text-neutral-400">Year</dt>
-            <dd class="m-0">{{ selectedItem.year }}</dd>
-          </div>
-          <div
-            v-if="selectedItem.content_rating"
-            class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
-          >
-            <dt class="text-neutral-600 dark:text-neutral-400">
-              Content rating
-            </dt>
-            <dd class="m-0">
-              <a
-                :href="routeFor('content-ratings', selectedItem.content_rating)"
-                @click="
-                  navigate(
-                    $event,
-                    routeFor('content-ratings', selectedItem.content_rating),
-                  )
-                "
-                >{{ selectedItem.content_rating }}</a
-              >
-            </dd>
-          </div>
-          <div
-            v-if="selectedItem.studio"
-            class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
-          >
-            <dt class="text-neutral-600 dark:text-neutral-400">Studio</dt>
-            <dd class="m-0">{{ selectedItem.studio }}</dd>
-          </div>
-          <div
-            v-if="selectedItem.season_count"
-            class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
-          >
-            <dt class="text-neutral-600 dark:text-neutral-400">Seasons</dt>
-            <dd class="m-0">{{ selectedItem.season_count }}</dd>
-          </div>
-          <template
-            v-for="resource in [
-              'genres',
-              'people',
-              'countries',
-              'collections',
-            ] as const"
-            :key="resource"
-          >
             <div
-              v-if="selectedItem[resource]?.length"
+              class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
+            >
+              <dt class="text-neutral-600 dark:text-neutral-400">Type</dt>
+              <dd class="m-0">{{ formatType(selectedItem.type) }}</dd>
+            </div>
+            <div
+              v-if="selectedItem.year"
+              class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
+            >
+              <dt class="text-neutral-600 dark:text-neutral-400">Year</dt>
+              <dd class="m-0">{{ selectedItem.year }}</dd>
+            </div>
+            <div
+              v-if="selectedItem.content_rating"
               class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
             >
               <dt class="text-neutral-600 dark:text-neutral-400">
-                {{
-                  resource === "people"
-                    ? "People"
-                    : resource[0]?.toUpperCase() + resource.slice(1)
-                }}
+                Content rating
               </dt>
-              <dd class="m-0 flex flex-wrap gap-x-[14px] gap-y-[6px]">
+              <dd class="m-0">
                 <a
-                  v-for="related in selectedItem[resource]"
-                  :key="related.id"
-                  :href="resourceRoute(resource, related)"
-                  @click="navigate($event, resourceRoute(resource, related))"
-                  class="hover:decoration-2"
-                  >{{ related.name }}</a
+                  :href="
+                    routeFor('content-ratings', selectedItem.content_rating)
+                  "
+                  @click="
+                    navigate(
+                      $event,
+                      routeFor('content-ratings', selectedItem.content_rating),
+                    )
+                  "
+                  >{{ selectedItem.content_rating }}</a
                 >
+                <AgeRatingIndicator
+                  class="ml-2"
+                  :rating="selectedItem.content_rating"
+                  :age="viewerAge ?? 0"
+                />
               </dd>
             </div>
-          </template>
+            <div
+              v-if="selectedItem.studio"
+              class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
+            >
+              <dt class="text-neutral-600 dark:text-neutral-400">Studio</dt>
+              <dd class="m-0">{{ selectedItem.studio }}</dd>
+            </div>
+            <div
+              v-if="selectedItem.season_count"
+              class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
+            >
+              <dt class="text-neutral-600 dark:text-neutral-400">Seasons</dt>
+              <dd class="m-0">{{ selectedItem.season_count }}</dd>
+            </div>
+            <template
+              v-for="resource in [
+                'genres',
+                'people',
+                'countries',
+                'collections',
+              ] as const"
+              :key="resource"
+            >
+              <div
+                v-if="selectedItem[resource]?.length"
+                class="grid grid-cols-[150px_1fr] gap-[14px] border-b border-neutral-300 py-3 text-[13px] max-[480px]:grid-cols-[115px_1fr] dark:border-neutral-700"
+              >
+                <dt class="text-neutral-600 dark:text-neutral-400">
+                  {{
+                    resource === "people"
+                      ? "People"
+                      : resource[0]?.toUpperCase() + resource.slice(1)
+                  }}
+                </dt>
+                <dd class="m-0 flex flex-wrap gap-x-[14px] gap-y-[6px]">
+                  <a
+                    v-for="related in selectedItem[resource]"
+                    :key="related.id"
+                    :href="resourceRoute(resource, related)"
+                    @click="navigate($event, resourceRoute(resource, related))"
+                    class="hover:decoration-2"
+                    >{{ related.name }}</a
+                  >
+                </dd>
+              </div>
+            </template>
           </dl>
         </div>
       </section>
@@ -805,8 +849,8 @@ onUnmounted(() => {
                 (hasItemFilters
                   ? pagination?.total
                   : selectedEntry.item_count) ??
-                  pagination?.total ??
-                  items.length
+                pagination?.total ??
+                items.length
               }}
               {{
                 ((hasItemFilters
@@ -824,6 +868,7 @@ onUnmounted(() => {
         <ListResults
           class="pt-5"
           :items="items"
+          :age="viewerAge ?? 0"
           :total="pagination?.total ?? items.length"
           :format-type="formatType"
           :query="query"
@@ -848,6 +893,7 @@ onUnmounted(() => {
         v-else-if="isDetail && selectedEntry"
         label="Titles in category"
         :items="items"
+        :age="viewerAge ?? 0"
         :total="pagination?.total ?? items.length"
         :format-type="formatType"
         :query="query"
@@ -869,6 +915,7 @@ onUnmounted(() => {
       <ListResults
         v-else-if="section?.key === 'titles'"
         :items="items"
+        :age="viewerAge ?? 0"
         :total="pagination?.total ?? items.length"
         :format-type="formatType"
         :query="query"
@@ -907,7 +954,14 @@ onUnmounted(() => {
             :href="resourceRoute(section.key, entry)"
             @click="navigate($event, resourceRoute(section.key, entry))"
           >
-            <span class="text-sm font-medium">{{ entryName(entry) }}</span>
+            <span class="flex items-center gap-2 text-sm font-medium">
+              {{ entryName(entry) }}
+              <AgeRatingIndicator
+                v-if="section.key === 'content-ratings'"
+                :rating="entryName(entry)"
+                :age="viewerAge ?? 0"
+              />
+            </span>
             <span class="text-xs text-neutral-600 dark:text-neutral-400">{{
               entry.type ?? ""
             }}</span>
