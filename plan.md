@@ -18,4 +18,4 @@
   - [x] styled pages using tailwind
   - [x] user age grouping
   - [x] sort & filter items - api calling
-  - [ ] rework home page to have big section buttons for navigation
+  - [x] rework home page to have big section buttons for navigation

@@ -6,6 +6,7 @@ import AgeRatingIndicator from "@/components/AgeRatingIndicator.vue";
 import ListControls from "@/components/ListControls.vue";
 import LoadMoreButton from "@/components/LoadMoreButton.vue";
 import ListResults from "@/components/ListResults.vue";
+import HomePage from "@/components/HomePage.vue";
 
 type SectionKey =
   | "titles"
@@ -20,6 +21,8 @@ interface Section {
   label: string;
   singular: string;
   description: string;
+  image: string;
+  tint: string;
 }
 
 interface Entry {
@@ -61,36 +64,48 @@ const sections: Section[] = [
     label: "Titles",
     singular: "Title",
     description: "All movies and series.",
+    image: "/images/category-titles.svg",
+    tint: "#2563eb",
   },
   {
     key: "genres",
     label: "Genres",
     singular: "Genre",
     description: "Browse by genre.",
+    image: "/images/category-genres.svg",
+    tint: "#7c3aed",
   },
   {
     key: "people",
     label: "People",
     singular: "Person",
     description: "Actors and other credited people.",
+    image: "/images/category-people.svg",
+    tint: "#db2777",
   },
   {
     key: "content-ratings",
     label: "Content ratings",
     singular: "Content rating",
     description: "Browse by content rating.",
+    image: "/images/category-content-ratings.svg",
+    tint: "#d97706",
   },
   {
     key: "countries",
     label: "Countries",
     singular: "Country",
     description: "Browse by country.",
+    image: "/images/category-countries.svg",
+    tint: "#059669",
   },
   {
     key: "collections",
     label: "Collections",
     singular: "Collection",
     description: "Browse collections.",
+    image: "/images/category-collections.svg",
+    tint: "#0891b2",
   },
 ];
 
@@ -591,10 +606,18 @@ onUnmounted(() => {
     </header>
 
     <main
-      class="mx-auto min-h-[calc(100vh-58px)] w-[90%] max-w-[1060px] py-[52px] max-[760px]:py-[34px]"
+      :class="
+        isHome
+          ? 'mx-auto min-h-[calc(100vh-58px)] w-full px-[5vw] py-[34px]'
+          : 'mx-auto min-h-[calc(100vh-58px)] w-[90%] max-w-[1060px] py-[52px] max-[760px]:py-[34px]'
+      "
     >
       <div
-        class="mb-7 flex items-end justify-between gap-6 max-[760px]:flex-col max-[760px]:items-start max-[760px]:gap-[14px]"
+        :class="
+          isHome
+            ? 'mb-6 flex items-end justify-between gap-6'
+            : 'mb-7 flex items-end justify-between gap-6 max-[760px]:flex-col max-[760px]:items-start max-[760px]:gap-[14px]'
+        "
       >
         <div>
           <p
@@ -615,13 +638,13 @@ onUnmounted(() => {
           <h1
             class="m-0 text-[clamp(26px,4vw,38px)] font-medium tracking-[-1px]"
           >
-            {{ isHome ? "Media library" : pageHeading }}
+            {{ isHome ? "Explore" : pageHeading }}
           </h1>
           <p
             v-if="isHome"
             class="mt-[9px] max-w-[660px] text-sm leading-relaxed text-neutral-600 dark:text-neutral-400"
           >
-            Choose a section to explore.
+            Browse the media database by category.
           </p>
           <p
             v-else-if="!isDetail && section"
@@ -652,59 +675,11 @@ onUnmounted(() => {
         {{ error }}
       </p>
 
-      <ListResults
-        v-else-if="hasItemFilters && isHome"
-        :items="items"
-        :age="viewerAge ?? 0"
-        :total="pagination?.total ?? items.length"
-        :format-type="formatType"
-        :query="query"
-        :sort="sortOption"
-        :type-filter="typeFilter"
-        :rating-filter="ratingFilter"
-        :content-ratings="contentRatings"
-        :content-rating-error="contentRatingError"
-        :loading-more="loadingMore"
-        :searching="searching"
+      <HomePage
+        v-else-if="isHome"
+        :categories="sections"
         @navigate="navigate"
-        @load-more="loadMore"
-        @update:sort="sortOption = $event"
-        @update:query="query = $event"
-        @update:type-filter="typeFilter = $event"
-        @update:rating-filter="ratingFilter = $event"
       />
-
-      <section v-else-if="isHome" aria-label="Library sections">
-        <ListControls
-          mode="items"
-          :sort="sortOption"
-          :query="query"
-          :type="typeFilter"
-          :content-rating="ratingFilter"
-          :content-ratings="contentRatings"
-          :content-rating-error="contentRatingError"
-          @update:sort="sortOption = $event"
-          @update:query="query = $event"
-          @update:type="typeFilter = $event"
-          @update:content-rating="ratingFilter = $event"
-        />
-        <div class="border-t border-neutral-300 dark:border-neutral-700">
-          <a
-            v-for="entry in sections"
-            :key="entry.key"
-            class="grid min-h-[53px] grid-cols-[minmax(130px,1fr)_minmax(150px,2fr)_24px] items-center gap-4 border-b border-neutral-300 px-1 py-2.5 no-underline hover:bg-neutral-100 max-[480px]:grid-cols-[1fr_24px] dark:border-neutral-700 dark:hover:bg-neutral-900"
-            :href="routeFor(entry.key)"
-            @click="navigate($event, routeFor(entry.key))"
-          >
-            <span class="text-sm font-medium">{{ entry.label }}</span>
-            <span
-              class="text-xs text-neutral-600 max-[480px]:hidden dark:text-neutral-400"
-              >{{ entry.description }}</span
-            >
-            <ChevronRight class="ml-auto" :size="16" aria-hidden="true" />
-          </a>
-        </div>
-      </section>
 
       <section v-else-if="selectedTitle && selectedItem" class="space-y-5">
         <div
