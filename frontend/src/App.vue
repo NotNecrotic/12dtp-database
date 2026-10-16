@@ -549,7 +549,7 @@ onUnmounted(() => {
   <div
     v-else
     :class="[
-      'min-h-screen bg-white text-neutral-950 dark:bg-neutral-950 dark:text-neutral-100',
+      'flex min-h-screen flex-col bg-white text-neutral-950 dark:bg-neutral-950 dark:text-neutral-100',
       { dark: isDark },
     ]"
   >
@@ -608,8 +608,8 @@ onUnmounted(() => {
     <main
       :class="
         isHome
-          ? 'mx-auto min-h-[calc(100vh-58px)] w-full px-[5vw] py-[34px]'
-          : 'mx-auto min-h-[calc(100vh-58px)] w-[90%] max-w-[1060px] py-[52px] max-[760px]:py-[34px]'
+          ? 'mx-auto w-full flex-1 px-[5vw] py-[34px]'
+          : 'mx-auto w-[90%] max-w-[1060px] flex-1 py-[52px] max-[760px]:py-[34px]'
       "
     >
       <div
