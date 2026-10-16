@@ -1,0 +1,10 @@
+{
+  "name": "12dtp-database",
+  "private": true,
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "dev": "node scripts/dev.mjs",
+    "fetch": "npm run fetch --prefix backend",
+    "build": "npm run build --prefix frontend"
+  }
+}
