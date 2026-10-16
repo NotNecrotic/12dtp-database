@@ -26,7 +26,7 @@ function routeFor(key: string) {
       <a
         v-for="category in categories"
         :key="category.key"
-        class="group relative isolate flex min-h-[clamp(190px,30vh,380px)] items-end overflow-hidden border border-neutral-300 bg-neutral-300 text-white no-underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-700 dark:border-neutral-700 dark:bg-neutral-800"
+        class="group relative isolate flex min-h-[clamp(190px,30vh,380px)] items-end overflow-hidden border border-neutral-300 bg-neutral-300 text-neutral-950 no-underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-700 dark:border-neutral-700 dark:bg-neutral-800 dark:text-white"
         :href="routeFor(category.key)"
         @click="emit('navigate', $event, routeFor(category.key))"
       >
@@ -42,14 +42,16 @@ function routeFor(key: string) {
           aria-hidden="true"
         />
         <span
-          class="absolute inset-0 -z-10 bg-gradient-to-t from-black/85 via-black/20 to-transparent"
+          class="absolute inset-0 -z-10 bg-gradient-to-t from-white/50 via-white/10 to-transparent dark:from-black/85 dark:via-black/20"
           aria-hidden="true"
         />
         <span class="p-6 sm:p-7">
           <span class="block text-2xl font-medium sm:text-3xl">
             {{ category.label }}
           </span>
-          <span class="mt-2 block max-w-sm text-sm text-white/85">
+          <span
+            class="mt-2 block max-w-sm text-sm text-neutral-800 dark:text-white/85"
+          >
             {{ category.description }}
           </span>
         </span>
