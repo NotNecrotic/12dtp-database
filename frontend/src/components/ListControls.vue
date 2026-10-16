@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * This component provides controls for sorting and filtering a list of items.
+ */
+
 import { ArrowUpDown, ListFilter } from "@lucide/vue";
 
 defineProps<{
@@ -6,16 +10,12 @@ defineProps<{
   sort: string;
   query: string;
   type: string;
-  contentRating: string;
-  contentRatings: string[];
-  contentRatingError: string;
 }>();
 
 const emit = defineEmits<{
   "update:sort": [value: string];
   "update:query": [value: string];
   "update:type": [value: string];
-  "update:contentRating": [value: string];
 }>();
 
 const selectClass =
@@ -42,7 +42,9 @@ const selectClass =
         id="list-sort"
         :value="sort"
         :class="selectClass"
-        @change="emit('update:sort', ($event.target as HTMLSelectElement).value)"
+        @change="
+          emit('update:sort', ($event.target as HTMLSelectElement).value)
+        "
       >
         <template v-if="mode === 'items'">
           <option value="title-asc">Title: A to Z</option>
@@ -57,37 +59,24 @@ const selectClass =
       </select>
 
       <template v-if="mode === 'items'">
-      <ListFilter
-        :size="16"
-        class="ml-2 mr-1 text-neutral-600 dark:text-neutral-400"
-        aria-hidden="true"
-      />
-      <label class="sr-only" for="title-type">Filter by type</label>
-      <select
-        id="title-type"
-        :value="type"
-        :class="selectClass"
-        @change="emit('update:type', ($event.target as HTMLSelectElement).value)"
-      >
-        <option value="">All types</option>
-        <option value="movie">Movies</option>
-        <option value="show">Series</option>
-      </select>
-
-      <label class="sr-only" for="title-rating">Filter by content rating</label>
-      <select
-        id="title-rating"
-        :value="contentRating"
-        :class="selectClass"
-        @change="
-          emit('update:contentRating', ($event.target as HTMLSelectElement).value)
-        "
-      >
-        <option value="">All ratings</option>
-        <option v-for="rating in contentRatings" :key="rating" :value="rating">
-          {{ rating }}
-        </option>
-      </select>
+        <ListFilter
+          :size="16"
+          class="ml-2 mr-1 text-neutral-600 dark:text-neutral-400"
+          aria-hidden="true"
+        />
+        <label class="sr-only" for="title-type">Filter by type</label>
+        <select
+          id="title-type"
+          :value="type"
+          :class="selectClass"
+          @change="
+            emit('update:type', ($event.target as HTMLSelectElement).value)
+          "
+        >
+          <option value="">All types</option>
+          <option value="movie">Movies</option>
+          <option value="show">Series</option>
+        </select>
       </template>
     </div>
 
@@ -102,11 +91,4 @@ const selectClass =
       @input="emit('update:query', ($event.target as HTMLInputElement).value)"
     />
   </div>
-  <p
-    v-if="mode === 'items' && contentRatingError"
-    class="px-1 pb-2 text-xs text-red-800 dark:text-red-300"
-    role="status"
-  >
-    {{ contentRatingError }}
-  </p>
 </template>

@@ -132,7 +132,7 @@ function itemPeople(
   return [...uniquePeople.values()];
 }
 
-// Run the mapper on every value, with no more than `concurrency` calls at a time.
+// Run the mapper on every value, with no more than "concurrency" calls at a time.
 async function mapConcurrent<T, U>(
   values: T[],
   concurrency: number,
@@ -238,11 +238,11 @@ async function plexRequest<T>(url: string, token: string): Promise<T> {
     throw new Error(`Plex API ${response.status}: ${response.statusText}`);
   }
 
-  // Plex returns JSON when the Accept header is set above.
+  // Plex returns JSON when the Accept header is set.
   return response.json() as Promise<T>;
 }
 
-// Fetch supported libraries, their items, collections, and people metadata.
+// Fetch libraries, their items, collections, and people metadata.
 async function fetchData(url: string, token: string): Promise<PlexLibrary[]> {
   // Normalize url so relative artwork paths and API routes share the same base.
   const baseUrl = url.replace(/\/$/, "");

@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * This component displays a list of results with sorting and filtering capabilities.
+ */
+
 import ListControls from "@/components/ListControls.vue";
 import LoadMoreButton from "@/components/LoadMoreButton.vue";
 import AgeRatingIndicator from "@/components/AgeRatingIndicator.vue";
@@ -20,9 +24,6 @@ defineProps<{
   query: string;
   sort: string;
   typeFilter: string;
-  ratingFilter: string;
-  contentRatings: string[];
-  contentRatingError: string;
   label?: string;
   personMode?: boolean;
   loadingMore: boolean;
@@ -35,7 +36,6 @@ const emit = defineEmits<{
   "update:sort": [value: string];
   "update:query": [value: string];
   "update:typeFilter": [value: string];
-  "update:ratingFilter": [value: string];
 }>();
 
 function titleRoute(id: number) {
@@ -57,13 +57,9 @@ function isRated(rating: string | null | undefined): rating is string {
       :sort="sort"
       :query="query"
       :type="typeFilter"
-      :content-rating="ratingFilter"
-      :content-ratings="contentRatings"
-      :content-rating-error="contentRatingError"
       @update:sort="emit('update:sort', $event)"
       @update:query="emit('update:query', $event)"
       @update:type="emit('update:typeFilter', $event)"
-      @update:content-rating="emit('update:ratingFilter', $event)"
     />
     <a
       v-for="item in items"

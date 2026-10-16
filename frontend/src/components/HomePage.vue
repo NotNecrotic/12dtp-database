@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * This component displays a grid of categories that the user can browse. Each category has a label, description, image, and tint color.
+ */
+
 interface Category {
   key: string;
   label: string;

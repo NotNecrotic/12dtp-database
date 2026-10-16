@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * The main script for the media library. It manages routing, state, and API interactions for displaying titles, categories, and people, etc.
+ */
+
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ChevronRight, Home, Moon, Sun, Trash2 } from "@lucide/vue";
 import AgeGate from "@/components/AgeGate.vue";
@@ -116,10 +120,7 @@ const query = ref("");
 const sortOption = ref("title-asc");
 const entrySortOption = ref("name-asc");
 const typeFilter = ref("");
-const ratingFilter = ref("");
 const entries = ref<Entry[]>([]);
-const contentRatings = ref<string[]>([]);
-const contentRatingError = ref("");
 const personProfile = ref<Entry | null>(null);
 const items = ref<Item[]>([]);
 const selectedItem = ref<Item | null>(null);
@@ -133,6 +134,7 @@ let requestVersion = 0;
 let searchTimer: ReturnType<typeof setTimeout> | undefined;
 let suppressSearchWatch = false;
 
+// Retrieve the viewer age from local storage, or null if not set or invalid.
 function getSavedViewerAge(): number | null {
   const value = window.localStorage.getItem("viewer-age");
   if (value === null) return null;
@@ -141,24 +143,11 @@ function getSavedViewerAge(): number | null {
   return Number.isInteger(age) && age >= 0 && age <= 120 ? age : null;
 }
 
+// Save the viewer age to local storage and reload the current page.
 function saveViewerAge(age: number) {
   window.localStorage.setItem("viewer-age", String(age));
   viewerAge.value = age;
   void loadPage();
-  loadContentRatings();
-}
-
-function loadContentRatings() {
-  void api<Entry[]>("/content-ratings")
-    .then((ratings) => {
-      contentRatings.value = ratings.map(entryName);
-    })
-    .catch((cause: unknown) => {
-      contentRatingError.value =
-        cause instanceof Error
-          ? `Could not load rating options: ${cause.message}`
-          : "Could not load rating options.";
-    });
 }
 
 const parts = computed(() => path.value.split("/").filter(Boolean));
@@ -177,10 +166,7 @@ const isHome = computed(() => parts.value.length === 0);
 const isDetail = computed(() => parts.value.length > 1);
 const hasItemFilters = computed(() =>
   Boolean(
-    query.value.trim() ||
-    typeFilter.value ||
-    ratingFilter.value ||
-    sortOption.value !== "title-asc",
+    query.value.trim() || typeFilter.value || sortOption.value !== "title-asc",
   ),
 );
 const pageHeading = computed(() => {
@@ -223,9 +209,6 @@ function getPage<T = Item>(
     params.set("sort", sort);
     params.set("order", order);
     if (typeFilter.value) params.set("type", typeFilter.value);
-    if (ratingFilter.value) {
-      params.set("content_rating", ratingFilter.value);
-    }
   }
   if (entryFilters) {
     const [, order = "asc"] = entrySortOption.value.split("-");
@@ -240,6 +223,11 @@ function entryEndpoint(key: SectionKey) {
   return key === "content-ratings" ? "/content-ratings" : `/${key}`;
 }
 
+// Map a content rating to the API route that lists its items.
+function contentRatingItemsEndpoint(rating: string) {
+  return `/content-ratings/${encodeURIComponent(rating)}/items`;
+}
+
 // Load the data needed for the current home, section, category, or title route.
 async function loadPage() {
   const version = ++requestVersion;
@@ -250,7 +238,6 @@ async function loadPage() {
   sortOption.value = "title-asc";
   entrySortOption.value = "name-asc";
   typeFilter.value = "";
-  ratingFilter.value = "";
   suppressSearchWatch = false;
   entries.value = [];
   personProfile.value = null;
@@ -304,6 +291,31 @@ async function loadPage() {
       if (version !== requestVersion) return;
       items.value = result.data;
       pagination.value = result.pagination;
+    } else if (currentSection.key === "content-ratings") {
+      let rating: string;
+      try {
+        rating = decodeURIComponent(routeParts[1] ?? "");
+      } catch {
+        error.value = "Invalid content rating.";
+        return;
+      }
+
+      const result = await getPage(
+        contentRatingItemsEndpoint(rating),
+        0,
+        "",
+        true,
+      );
+      if (version !== requestVersion) return;
+      entries.value = [
+        {
+          id: routeParts[1] ?? rating,
+          name: rating,
+          item_count: result.pagination.total,
+        },
+      ];
+      items.value = result.data;
+      pagination.value = result.pagination;
     } else {
       const categoryList = await api<Entry[]>(
         entryEndpoint(currentSection.key),
@@ -340,7 +352,7 @@ async function loadPage() {
   }
 }
 
-// Replace the current page when search changes, leaving pagination to the API.
+// Replace the current page when search changes.
 async function searchCurrentPage(term: string, version: number) {
   const routeParts = path.value.split("/").filter(Boolean);
   const currentSection = sections.find(
@@ -352,10 +364,7 @@ async function searchCurrentPage(term: string, version: number) {
   }
   error.value = "";
   try {
-    if (
-      routeParts.length === 0 ||
-      currentSection?.key === "titles"
-    ) {
+    if (routeParts.length === 0 || currentSection?.key === "titles") {
       const result = await getPage("/items", 0, term, true);
       if (version !== requestVersion) return;
       items.value = result.data;
@@ -373,7 +382,10 @@ async function searchCurrentPage(term: string, version: number) {
       pagination.value = result.pagination;
     } else {
       if (!currentSection) return;
-      const endpoint = `/${currentSection.key}/${encodeURIComponent(routeParts[1] ?? "")}/items`;
+      const endpoint =
+        currentSection.key === "content-ratings"
+          ? contentRatingItemsEndpoint(decodeURIComponent(routeParts[1] ?? ""))
+          : `/${currentSection.key}/${encodeURIComponent(routeParts[1] ?? "")}/items`;
       const result = await getPage(endpoint, 0, term, true);
       if (version !== requestVersion) return;
       items.value = result.data;
@@ -408,7 +420,10 @@ async function loadMore() {
     const routeParts = path.value.split("/").filter(Boolean);
     let endpoint = "/items";
     if (routeParts.length > 1 && currentSection?.key !== "titles") {
-      endpoint = `/${currentSection?.key}/${encodeURIComponent(routeParts[1] ?? "")}/items`;
+      endpoint =
+        currentSection?.key === "content-ratings"
+          ? contentRatingItemsEndpoint(decodeURIComponent(routeParts[1] ?? ""))
+          : `/${currentSection?.key}/${encodeURIComponent(routeParts[1] ?? "")}/items`;
     }
     const isEntryList =
       routeParts.length === 1 &&
@@ -447,7 +462,7 @@ async function loadMore() {
 }
 
 watch(
-  [query, sortOption, entrySortOption, typeFilter, ratingFilter],
+  [query, sortOption, entrySortOption, typeFilter],
   ([term]) => {
     if (suppressSearchWatch) return;
     if (searchTimer) clearTimeout(searchTimer);
@@ -502,6 +517,7 @@ function entryName(entry: Entry) {
   return entry.name ?? entry.title ?? "";
 }
 
+// Returns true if the content rating is not null, empty, or "not rated".
 function isRated(value: string | null | undefined): value is string {
   return Boolean(value?.trim() && value.trim().toLowerCase() !== "not rated");
 }
@@ -522,6 +538,7 @@ function toggleTheme() {
   window.localStorage.setItem("theme", isDark.value ? "dark" : "light");
 }
 
+// Clear the saved viewer age and reload the page to show the age gate.
 function resetViewerAge() {
   window.localStorage.removeItem("viewer-age");
   viewerAge.value = null;
@@ -529,10 +546,7 @@ function resetViewerAge() {
 
 onMounted(() => {
   window.addEventListener("popstate", syncPath);
-  if (viewerAge.value !== null) {
-    void loadPage();
-    loadContentRatings();
-  }
+  if (viewerAge.value !== null) void loadPage();
 });
 onUnmounted(() => {
   window.removeEventListener("popstate", syncPath);
@@ -832,9 +846,6 @@ onUnmounted(() => {
           :query="query"
           :sort="sortOption"
           :type-filter="typeFilter"
-          :rating-filter="ratingFilter"
-          :content-ratings="contentRatings"
-          :content-rating-error="contentRatingError"
           person-mode
           :loading-more="loadingMore"
           :searching="searching"
@@ -843,7 +854,6 @@ onUnmounted(() => {
           @update:sort="sortOption = $event"
           @update:query="query = $event"
           @update:type-filter="typeFilter = $event"
-          @update:rating-filter="ratingFilter = $event"
         />
       </section>
 
@@ -857,9 +867,6 @@ onUnmounted(() => {
         :query="query"
         :sort="sortOption"
         :type-filter="typeFilter"
-        :rating-filter="ratingFilter"
-        :content-ratings="contentRatings"
-        :content-rating-error="contentRatingError"
         :loading-more="loadingMore"
         :searching="searching"
         @navigate="navigate"
@@ -867,7 +874,6 @@ onUnmounted(() => {
         @update:sort="sortOption = $event"
         @update:query="query = $event"
         @update:type-filter="typeFilter = $event"
-        @update:rating-filter="ratingFilter = $event"
       />
 
       <ListResults
@@ -879,9 +885,6 @@ onUnmounted(() => {
         :query="query"
         :sort="sortOption"
         :type-filter="typeFilter"
-        :rating-filter="ratingFilter"
-        :content-ratings="contentRatings"
-        :content-rating-error="contentRatingError"
         :loading-more="loadingMore"
         :searching="searching"
         @navigate="navigate"
@@ -889,7 +892,6 @@ onUnmounted(() => {
         @update:sort="sortOption = $event"
         @update:query="query = $event"
         @update:type-filter="typeFilter = $event"
-        @update:rating-filter="ratingFilter = $event"
       />
 
       <section v-else-if="section" :aria-label="section.label">
@@ -898,9 +900,6 @@ onUnmounted(() => {
           :sort="entrySortOption"
           :query="query"
           type=""
-          content-rating=""
-          :content-ratings="[]"
-          content-rating-error=""
           @update:sort="entrySortOption = $event"
           @update:query="query = $event"
         />
@@ -916,8 +915,7 @@ onUnmounted(() => {
               {{ entryName(entry) }}
               <AgeRatingIndicator
                 v-if="
-                  section.key === 'content-ratings' &&
-                  isRated(entryName(entry))
+                  section.key === 'content-ratings' && isRated(entryName(entry))
                 "
                 :rating="entryName(entry)"
                 :age="viewerAge ?? 0"

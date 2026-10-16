@@ -1,6 +1,10 @@
 <script setup lang="ts">
+/**
+ * This component displays an indicator showing whether the user is old enough for a given content rating.
+ */
+
 import { computed } from "vue";
-import { CircleCheck, CircleHelp, CircleX } from "@lucide/vue";
+import { CircleCheck, CircleX } from "@lucide/vue";
 
 const props = defineProps<{
   rating: string;

@@ -1,6 +1,9 @@
 <script setup lang="ts">
+/**
+ * This component is used to prompt the user for their age, which is stored in localStorage and used to determine what content is appropriate for them.
+ */
+
 import { ref } from "vue";
-import { ShieldCheck } from "@lucide/vue";
 
 const emit = defineEmits<{
   submitAge: [age: number];
@@ -13,6 +16,7 @@ defineProps<{
 const ageInput = ref<number | string>("");
 const error = ref("");
 
+// Validate the age input and emit the submitAge event if valid.
 function submitAge() {
   const age = Number(ageInput.value);
   if (
@@ -21,7 +25,7 @@ function submitAge() {
     age < 0 ||
     age > 120
   ) {
-    error.value = "Enter a whole number between 0 and 120.";
+    error.value = "Enter a number between 0 and 120.";
     return;
   }
 
