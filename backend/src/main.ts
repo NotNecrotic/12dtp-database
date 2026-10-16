@@ -58,6 +58,11 @@ const routes = [
   },
   {
     method: "GET",
+    path: `${API_PREFIX}/artwork/items/:id/:kind`,
+    description: "Load item artwork through the API.",
+  },
+  {
+    method: "GET",
     path: `${API_PREFIX}/collections`,
     description: "Search and list collections, optionally paginated.",
   },
@@ -146,6 +151,80 @@ function sendJson(
     "Content-Type": "application/json; charset=utf-8",
   });
   response.end(JSON.stringify(body));
+}
+
+// Map an item row to include artwork URLs for the API response.
+function mapItemArtwork(
+  item: Record<string, unknown>,
+): Record<string, unknown> {
+  if (typeof item.id !== "number") {
+    throw new Error("Item response did not include a numeric ID");
+  }
+
+  return {
+    ...item,
+    ...(typeof item.poster === "string" && {
+      poster: `${API_PREFIX}/artwork/items/${item.id}/poster`,
+    }),
+    ...(typeof item.background === "string" && {
+      background: `${API_PREFIX}/artwork/items/${item.id}/background`,
+    }),
+  };
+}
+
+// Load artwork from Plex and send it to the client, or return an error.
+async function sendArtwork(
+  response: ServerResponse,
+  artworkUrl: string | null | undefined,
+): Promise<void> {
+  if (!artworkUrl) {
+    sendJson(response, 404, { error: "Artwork not found" });
+    return;
+  }
+
+  if (!config.PLEX_URL || !config.PLEX_TOKEN) {
+    sendJson(response, 503, {
+      error: "Plex URL and token are required to load artwork",
+    });
+    return;
+  }
+
+  const sourceUrl = new URL(artworkUrl);
+  const plexUrl = new URL(config.PLEX_URL);
+  if (
+    sourceUrl.origin !== plexUrl.origin ||
+    (sourceUrl.protocol !== "http:" && sourceUrl.protocol !== "https:")
+  ) {
+    sendJson(response, 502, {
+      error: "Artwork URL does not match Plex server",
+    });
+    return;
+  }
+
+  for (const key of sourceUrl.searchParams.keys()) {
+    if (key.toLowerCase() === "x-plex-token") {
+      sourceUrl.searchParams.delete(key);
+    }
+  }
+
+  const plexResponse = await fetch(sourceUrl, {
+    headers: { "X-Plex-Token": config.PLEX_TOKEN },
+    redirect: "error",
+  });
+  if (!plexResponse.ok) {
+    sendJson(response, 502, {
+      error: `Plex artwork request failed with status ${plexResponse.status}`,
+    });
+    return;
+  }
+
+  response.writeHead(200, {
+    "Content-Type":
+      plexResponse.headers.get("content-type") ?? "application/octet-stream",
+    "Cache-Control": "private, max-age=3600",
+    "X-Content-Type-Options": "nosniff",
+  });
+  response.end(Buffer.from(await plexResponse.arrayBuffer()));
 }
 
 // Accept only positive integer IDs from route parameters.
@@ -347,7 +426,9 @@ function listItems(
       ...(personId === undefined ? {} : { person_id: personId }),
       ...page,
     }) as Record<string, unknown>[];
-  const data = rows.map((item) => hideUnratedContentRating(item));
+  const data = rows.map((item) =>
+    mapItemArtwork(hideUnratedContentRating(item)),
+  );
 
   return {
     data,
@@ -374,7 +455,7 @@ function getItem(id: number): unknown | undefined {
   }
 
   return {
-    ...hideUnratedContentRating(item),
+    ...mapItemArtwork(hideUnratedContentRating(item)),
     collections: db
       .prepare(
         `
@@ -423,10 +504,10 @@ function getItem(id: number): unknown | undefined {
 }
 
 // Match an incoming request to an API route and send its response.
-function handleRequest(
+async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse,
-): void {
+): Promise<void> {
   if (request.method !== "GET") {
     sendJson(response, 405, { error: "Method not allowed" });
     return;
@@ -458,6 +539,23 @@ function handleRequest(
   }
 
   const [, , resource, idText, action] = parts;
+
+  if (resource === "artwork") {
+    if (parts[3] === "items" && parts.length === 6) {
+      const id = parseId(parts[4] ?? "");
+      const kind = parts[5];
+      if (id === null || (kind !== "poster" && kind !== "background")) {
+        sendJson(response, 400, { error: "Invalid artwork request" });
+        return;
+      }
+
+      const row = db
+        .prepare(`SELECT ${kind} AS url FROM artwork WHERE item_id = @id`)
+        .get({ id }) as { url: string | null } | undefined;
+      await sendArtwork(response, row?.url);
+      return;
+    }
+  }
 
   if (resource === "items") {
     if (!idText && parts.length === 3) {
@@ -666,12 +764,14 @@ function handleRequest(
 
 // Create and start the HTTP server to handle API requests.
 const server = createServer((request, response) => {
-  try {
-    handleRequest(request, response);
-  } catch (error) {
+  handleRequest(request, response).catch((error: unknown) => {
     console.error("API request failed:", error);
-    sendJson(response, 500, { error: "Internal server error" });
-  }
+    if (!response.headersSent) {
+      sendJson(response, 500, { error: "Internal server error" });
+    } else {
+      response.destroy();
+    }
+  });
 });
 
 server.listen(config.PORT, "127.0.0.1", () => {

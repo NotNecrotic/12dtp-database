@@ -8,12 +8,10 @@ import { z } from "zod";
 const schema = z.object({
   DATA_PATH: z.string().default("/data"),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
-  PLEX_URL: z.url().min(1),
-  PLEX_TOKEN: z.string().min(1),
+  PLEX_URL: z.string().default(""),
+  PLEX_TOKEN: z.string().default(""),
 });
 
-let config: z.infer<typeof schema>;
-
-config = schema.parse(process.env);
+const config = schema.parse(process.env);
 
 export { config };

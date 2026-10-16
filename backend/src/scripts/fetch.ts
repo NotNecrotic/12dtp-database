@@ -77,19 +77,21 @@ function toId(value: string, name: string): number {
   return id;
 }
 
-// Turn a Plex artwork path into a full URL that includes the access token.
+// Turn a Plex artwork path into a full URL without persisting credentials.
 function toAssetUrl(
   baseUrl: string,
   path: string | undefined,
-  token: string,
 ): string | null {
   if (!path) {
     return null;
   }
 
-  // Plex image paths are relative, the token makes each URL directly usable.
   const url = new URL(path, baseUrl);
-  url.searchParams.set("X-Plex-Token", token);
+  for (const key of url.searchParams.keys()) {
+    if (key.toLowerCase() === "x-plex-token") {
+      url.searchParams.delete(key);
+    }
+  }
 
   return url.toString();
 }
@@ -108,14 +110,13 @@ function tagNames(tags: PlexTag[] | undefined): string[] {
 function itemPeople(
   metadata: PlexMetadata,
   baseUrl: string,
-  token: string,
 ): PlexPerson[] {
   const people = [
     ...(metadata.Role ?? []).map(({ tag, role: character, thumb }) => ({
       name: tag.trim(),
       role: "actor",
       character: character?.trim() || null,
-      profilePicture: toAssetUrl(baseUrl, thumb, token),
+      profilePicture: toAssetUrl(baseUrl, thumb),
     })),
     ...tagNames(metadata.Director).map((name) => ({ name, role: "director" })),
     ...tagNames(metadata.Writer).map((name) => ({ name, role: "writer" })),
@@ -319,7 +320,7 @@ async function fetchData(url: string, token: string): Promise<PlexLibrary[]> {
             );
           }
 
-          return itemPeople(detailedItem, baseUrl, token);
+          return itemPeople(detailedItem, baseUrl);
         },
       );
 
@@ -348,8 +349,8 @@ async function fetchData(url: string, token: string): Promise<PlexLibrary[]> {
           }),
           ...(item.parentIndex !== undefined && { season: item.parentIndex }),
           ...(item.index !== undefined && { episode: item.index }),
-          poster: toAssetUrl(baseUrl, item.thumb, token),
-          background: toAssetUrl(baseUrl, item.art, token),
+          poster: toAssetUrl(baseUrl, item.thumb),
+          background: toAssetUrl(baseUrl, item.art),
           genres: tagNames(item.Genre),
           collections: [
             ...new Set([
@@ -360,7 +361,7 @@ async function fetchData(url: string, token: string): Promise<PlexLibrary[]> {
             ]),
           ],
           countries: tagNames(item.Country),
-          people: peopleByItem[index] ?? itemPeople(item, baseUrl, token),
+          people: peopleByItem[index] ?? itemPeople(item, baseUrl),
         });
       }
 
@@ -658,6 +659,18 @@ function getOrInsertId(
   cache.set(name, id);
 
   return id;
+}
+
+if (!config.PLEX_URL || !config.PLEX_TOKEN) {
+  throw new Error(
+    "Set PLEX_URL and PLEX_TOKEN in backend/.env before fetching Plex data.",
+  );
+}
+
+try {
+  new URL(config.PLEX_URL);
+} catch {
+  throw new Error("PLEX_URL in backend/.env must be a valid URL.");
 }
 
 await generateData(config.PLEX_URL, config.PLEX_TOKEN);
