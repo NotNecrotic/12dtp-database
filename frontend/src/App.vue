@@ -99,7 +99,7 @@ const sections: Section[] = [
     key: "countries",
     label: "Countries",
     singular: "Country",
-    description: "Browse by country.",
+    description: "Browse by film location.",
     image: "/images/category-countries.svg",
     tint: "#059669",
   },
@@ -652,7 +652,7 @@ onUnmounted(() => {
           <h1
             class="m-0 text-[clamp(26px,4vw,38px)] font-medium tracking-[-1px]"
           >
-            {{ isHome ? "Explore" : pageHeading }}
+            {{ isHome ? "Explore Movies & Shows" : pageHeading }}
           </h1>
           <p
             v-if="isHome"
