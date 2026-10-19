@@ -690,7 +690,7 @@ async function handleRequest(
       const person = db
         .prepare(
           `
-          SELECT p.id, p.name, p.profile_picture, p.birth_date, p.death_date,
+          SELECT p.id, p.name, p.profile_picture,
             (
               SELECT COUNT(DISTINCT ip.item_id)
               FROM item_people ip
